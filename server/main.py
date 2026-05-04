@@ -65,3 +65,4 @@ async def get_history(db=Depends(get_db)):
             for l in listings
         ]
     }
+
