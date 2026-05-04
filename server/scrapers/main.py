@@ -1,4 +1,3 @@
-# main.py
 """
 FastAPI backend for House Deal Scraper.
 This file exposes API endpoints that call engine.py for:
@@ -11,7 +10,6 @@ This file exposes API endpoints that call engine.py for:
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from typing import List
 from server.engine import search_listings, serialize_analysis
 
 
@@ -35,29 +33,29 @@ app.add_middleware(
 # ---------------------------------------------------------
 
 @app.get("/health")
-def health():
+async def health():
     return {"status": "ok", "message": "Backend running"}
 
 
 # ---------------------------------------------------------
-# Main Analysis Endpoint
+# Main Analysis Endpoint (ASYNC)
 # ---------------------------------------------------------
 
 @app.get("/analyze")
-def analyze(
+async def analyze(
     city: str = Query(..., description="City to search"),
     state: str = Query(..., description="State to search"),
     include_photos: bool = Query(False, description="Fetch photos from all sources")
 ):
     """
     Main endpoint:
-    - Scrapes Redfin, Zillow, Realtor, Craigslist
+    - Scrapes Redfin, Zillow, Realtor, Craigslist, Facebook
     - Runs AI analysis (photo age, distress, systems)
     - Computes comp score + deal score
     - Generates buyer questionnaire + checklist
     """
     try:
-        results = search_listings(city, state, include_photos=include_photos)
+        results = await search_listings(city, state, include_photos=include_photos)
         return [serialize_analysis(r) for r in results]
 
     except Exception as e:
@@ -72,11 +70,5 @@ def analyze(
 # ---------------------------------------------------------
 
 @app.get("/")
-def root():
-    return {
-        "message": "House Deal Scraper API is running.",
-        "endpoints": {
-            "/health": "Check backend status",
-            "/analyze": "Run full property analysis"
-        }
-    }
+async def root():
+    return {"status": "House Deal Scraper Backend Running"}
