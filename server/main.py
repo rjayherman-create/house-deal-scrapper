@@ -1,99 +1,81 @@
-from scoring import compute_score
-from fastapi import FastAPI, Depends
-from pydantic import BaseModel
-from sqlalchemy.future import select
+# main.py
+"""
+FastAPI backend for House Deal Scraper.
+This file exposes API endpoints that call engine.py for:
+- Listing aggregation
+- AI analysis
+- Comp scoring
+- System ratings
+- Questionnaire generation
+"""
 
-from server.database import engine, get_db
-from server.models import Base, ListingModel
-from server.analysis import run_underwriting
-from server.llm import generate_explanation
-from server.scraper import scrape_listings
+from fastapi import FastAPI, Query
+from fastapi.middleware.cors import CORSMiddleware
+from typing import List
+from engine import search_listings, serialize_analysis
 
-app = FastAPI()
+app = FastAPI(
+    title="House Deal Scraper API",
+    description="Backend for property analysis, AI scoring, and questionnaire generation.",
+    version="1.0.0"
+)
 
-class Listing(BaseModel):
-    address: str
-    city: str
-    state: str
-    zip_code: str
-    asking_price: float
+# Allow GUI, Railway, localhost, etc.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # tighten later if needed
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ---------------------------------------------------------
+# Health Check
+# ---------------------------------------------------------
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "message": "Backend running"}
 
 
+# ---------------------------------------------------------
+# Main Analysis Endpoint
+# ---------------------------------------------------------
+
+@app.get("/analyze")
+def analyze(
+    city: str = Query(..., description="City to search"),
+    state: str = Query(..., description="State to search"),
+    include_photos: bool = Query(False, description="Fetch photos from all sources")
+):
+    """
+    Main endpoint:
+    - Scrapes Redfin, Zillow, Realtor, Craigslist
+    - Runs AI analysis (photo age, distress, systems)
+    - Computes comp score + deal score
+    - Generates buyer questionnaire + checklist
+    """
+    try:
+        results = search_listings(city, state, include_photos=include_photos)
+        return [serialize_analysis(r) for r in results]
+
+    except Exception as e:
+        return {
+            "error": True,
+            "message": str(e)
+        }
 
 
-
-@app.get("/api/listings/history")
-async def get_history(db=Depends(get_db)):
-    result = await db.execute(select(ListingModel))
-    listings = result.scalars().all()
-    return {
-        "history": [
-            {
-                "id": l.id,
-                "address": l.address,
-                "city": l.city,
-                "state": l.state,
-                "zip_code": l.zip_code,
-                "asking_price": l.asking_price,
-            }
-            for l in listings
-        ]
-    }
-@app.on_event("startup")
-async def on_startup():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
+# ---------------------------------------------------------
+# Root
+# ---------------------------------------------------------
 
 @app.get("/")
-def home():
-    return {"status": "House Deal Scrapper Backend Running"}
-
-
-@app.post("/api/listings/analyze")
-def analyze_listing(listing: Listing):
-    underwriting = run_underwriting(listing.dict())
-    explanation = generate_explanation(listing.dict(), underwriting)
-    score = compute_score(underwriting)
-
+def root():
     return {
-        "score": score,
-        "underwriting": underwriting,
-        "explanation": explanation,
-    }
-
-
-@app.post("/api/listings/save")
-async def save_listing(listing: Listing, db=Depends(get_db)):
-    new_listing = ListingModel(**listing.dict())
-    db.add(new_listing)
-    await db.commit()
-    await db.refresh(new_listing)
-    return {"status": "saved", "id": new_listing.id}
-
-
-# -----------------------------
-# SCRAPER ENDPOINT
-# -----------------------------
-class ScrapeRequest(BaseModel):
-    city: str
-    state: str
-    limit: int = 20
-
-
-@app.post("/api/listings/scrape")
-async def scrape_and_save(req: ScrapeRequest, db=Depends(get_db)):
-    listings_data = scrape_listings(req.city, req.state, req.limit)
-
-    saved = []
-    for data in listings_data:
-        listing = ListingModel(**data)
-        db.add(listing)
-        saved.append(data)
-
-    await db.commit()
-
-    return {
-        "count": len(saved),
-        "listings": saved
+        "message": "House Deal Scraper API is running.",
+        "endpoints": {
+            "/health": "Check backend status",
+            "/analyze": "Run full property analysis"
+        }
     }
