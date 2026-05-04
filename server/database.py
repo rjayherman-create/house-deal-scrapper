@@ -7,11 +7,20 @@ raw_db_url = os.getenv("DATABASE_URL")
 if raw_db_url is None:
     raise RuntimeError("DATABASE_URL is not set")
 
+# FORCE asyncpg driver
 # Convert postgres:// → postgresql+asyncpg://
 if raw_db_url.startswith("postgres://"):
     raw_db_url = raw_db_url.replace("postgres://", "postgresql+asyncpg://", 1)
 
-engine = create_async_engine(raw_db_url, echo=False, future=True)
+# If it already starts with postgresql://, convert it too
+if raw_db_url.startswith("postgresql://"):
+    raw_db_url = raw_db_url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+engine = create_async_engine(
+    raw_db_url,
+    echo=False,
+    future=True
+)
 
 AsyncSessionLocal = sessionmaker(
     bind=engine,
