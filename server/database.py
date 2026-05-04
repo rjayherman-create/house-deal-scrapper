@@ -2,7 +2,7 @@ import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-# Get DATABASE_URL from Railway environment
+# Get DATABASE_URL from Railway
 raw_db_url = os.getenv("DATABASE_URL")
 if raw_db_url is None:
     raise RuntimeError("DATABASE_URL is not set")
