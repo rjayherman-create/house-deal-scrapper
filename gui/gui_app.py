@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt, QThread, Signal
 
 
-API_URL = "http://localhost:8000/analyze"
+API_URL = "https://house-deal-scrapper-production.up.railway.app/analyze"
 
 
 # ---------------------------------------------------------
