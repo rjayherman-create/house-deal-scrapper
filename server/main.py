@@ -1,3 +1,4 @@
+from scoring import compute_score
 from fastapi import FastAPI, Depends
 from pydantic import BaseModel
 from sqlalchemy.future import select
@@ -18,34 +19,7 @@ class Listing(BaseModel):
     asking_price: float
 
 
-@app.on_event("startup")
-async def on_startup():
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
 
-
-@app.get("/")
-def home():
-    return {"status": "House Deal Scrapper Backend Running"}
-
-
-@app.post("/api/listings/analyze")
-def analyze_listing(listing: Listing):
-    underwriting = run_underwriting(listing.dict())
-    explanation = generate_explanation(listing.dict(), underwriting)
-    return {
-        "underwriting": underwriting,
-        "explanation": explanation,
-    }
-
-
-@app.post("/api/listings/save")
-async def save_listing(listing: Listing, db=Depends(get_db)):
-    new_listing = ListingModel(**listing.dict())
-    db.add(new_listing)
-    await db.commit()
-    await db.refresh(new_listing)
-    return {"status": "saved", "id": new_listing.id}
 
 
 @app.get("/api/listings/history")
@@ -65,6 +39,37 @@ async def get_history(db=Depends(get_db)):
             for l in listings
         ]
     }
+@app.on_event("startup")
+async def on_startup():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+
+@app.get("/")
+def home():
+    return {"status": "House Deal Scrapper Backend Running"}
+
+
+@app.post("/api/listings/analyze")
+def analyze_listing(listing: Listing):
+    underwriting = run_underwriting(listing.dict())
+    explanation = generate_explanation(listing.dict(), underwriting)
+    score = compute_score(underwriting)
+
+    return {
+        "score": score,
+        "underwriting": underwriting,
+        "explanation": explanation,
+    }
+
+
+@app.post("/api/listings/save")
+async def save_listing(listing: Listing, db=Depends(get_db)):
+    new_listing = ListingModel(**listing.dict())
+    db.add(new_listing)
+    await db.commit()
+    await db.refresh(new_listing)
+    return {"status": "saved", "id": new_listing.id}
 
 
 # -----------------------------
