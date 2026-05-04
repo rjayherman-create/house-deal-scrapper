@@ -24,3 +24,12 @@ def analyze_listing(listing: Listing):
 @app.get("/")
 def home():
     return {"status": "House Deal Scrapper Backend Running"}
+@app.post("/api/listings/save")
+def save_listing(listing: Listing):
+    # TODO: save to SQLite or Postgres
+    return {"status": "saved"}
+
+@app.get("/api/listings/history")
+def get_history():
+    # TODO: fetch from DB
+    return {"history": []}
