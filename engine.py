@@ -7,6 +7,7 @@ Sources:
 - Zillow
 - Realtor.com
 - Craigslist
+- Facebook Marketplace
 
 Core features:
 - Listing aggregation
@@ -23,6 +24,14 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import math
+
+# Import real scrapers
+from server.scrapers.redfin import fetch_redfin
+from server.scrapers.zillow import fetch_zillow
+from server.scrapers.realtor import fetch_realtor
+from server.scrapers.craigslist import fetch_craigslist
+from server.scrapers.facebook import fetch_facebook
+
 
 # ---------------------------------------------------------------------
 # Data models
@@ -48,9 +57,9 @@ class PhotoAnalysis:
 
 @dataclass
 class SystemRatings:
-    kitchen_score: float      # 1.0 functional, 0.5 partial, 0.0 non-functional
-    furnace_score: float      # same scale
-    water_heater_score: float # same scale
+    kitchen_score: float
+    furnace_score: float
+    water_heater_score: float
     system_condition_score: float
     notes: str
 
@@ -87,7 +96,7 @@ class Listing:
     baths: Optional[float]
     sqft: Optional[float]
     year_built: Optional[int]
-    photos: List[str]  # URLs or identifiers
+    photos: List[str]
     description: str
     seller_contact: Optional[str]
     raw_data: Dict[str, Any]
@@ -104,25 +113,10 @@ class ListingAnalysis:
 
 
 # ---------------------------------------------------------------------
-# Fetchers (stubs – you’ll wire real scraping/API logic here)
-# ---------------------------------------------------------------------
-
-
-# Use real scrapers from scraper.py
-
-
-# ---------------------------------------------------------------------
 # AI helpers (stubs – connect to Groq/OpenAI here)
 # ---------------------------------------------------------------------
 
 def ai_estimate_photo_age_and_distress(photos: List[str], description: str) -> PhotoAnalysis:
-    """
-    Use OpenAI/Groq vision + text to:
-    - estimate photo age (months)
-    - detect distress evidence (boarded windows, trash, missing doors, etc.)
-    - assign category + value_score
-    """
-    # TODO: call vision model; here is a placeholder heuristic
     if not photos:
         return PhotoAnalysis(
             estimated_age_months=None,
@@ -132,7 +126,6 @@ def ai_estimate_photo_age_and_distress(photos: List[str], description: str) -> P
             notes="No photos available; default medium uncertainty."
         )
 
-    # Placeholder: assume mid-aged, no distress
     estimated_age_months = 18.0
     category, value_score = bucket_photo_age(estimated_age_months)
     return PhotoAnalysis(
@@ -145,13 +138,6 @@ def ai_estimate_photo_age_and_distress(photos: List[str], description: str) -> P
 
 
 def ai_rate_systems(photos: List[str], description: str) -> SystemRatings:
-    """
-    Use AI to rate:
-    - kitchen functional / partial / non-functional
-    - furnace condition
-    - water heater condition
-    """
-    # TODO: call vision + text model; placeholder logic
     kitchen_score = 1.0
     furnace_score = 0.8
     water_heater_score = 0.8
@@ -167,18 +153,10 @@ def ai_rate_systems(photos: List[str], description: str) -> SystemRatings:
 
 
 def ai_compute_financial_score(listing: Listing) -> float:
-    """
-    Use rent estimates, taxes, etc. to compute a financial score (0–1).
-    """
-    # TODO: integrate real underwriting logic
     return 0.7
 
 
 def ai_detect_package_seller(listing: Listing, all_listings: List[Listing]) -> float:
-    """
-    Detect if seller is likely a package seller (0–1).
-    """
-    # TODO: use phone/email reuse, patterns, etc.
     return 0.3
 
 
@@ -201,12 +179,10 @@ def compute_comp_gap_score(listing_price: float, median_comp_price: Optional[flo
     if not median_comp_price or median_comp_price <= 0:
         return 0.5
     comp_gap = (median_comp_price - listing_price) / median_comp_price
-    # Map comp_gap to 0–1, clipping extremes
     return max(0.0, min(1.0, 0.5 + comp_gap))
 
 
 def compute_comp_density_score(num_comps: int) -> float:
-    # Simple saturation curve: 0 comps -> 0, 10+ comps -> ~1
     return 1.0 - math.exp(-num_comps / 5.0)
 
 
@@ -217,33 +193,23 @@ def compute_comp_freshness_score(avg_comp_age_months: Optional[float]) -> float:
         return 1.0
     if avg_comp_age_months >= 60:
         return 0.3
-    # Linear between 12 and 60
     return 1.0 - (avg_comp_age_months - 12) * (0.7 / 48.0)
 
 
 def compute_comp_similarity_score(listing: Listing, comps: List[Dict[str, Any]]) -> float:
-    # TODO: implement real similarity (beds, baths, sqft, year, condition)
     if not comps:
         return 0.5
     return 0.7
 
 
 def compute_photo_age_multiplier(photo_analysis: PhotoAnalysis) -> float:
-    if photo_analysis.category == "distress_evidence":
-        # Distress evidence is highly valuable but reduces comp confidence
-        return 0.5
     for name, _, _, mult in PHOTO_AGE_BUCKETS:
         if name == photo_analysis.category:
             return mult
     return 0.5
 
 
-def compute_comp_analysis(
-    listing: Listing,
-    photo_analysis: PhotoAnalysis,
-    comps: List[Dict[str, Any]]
-) -> CompAnalysis:
-    # Placeholder comp stats
+def compute_comp_analysis(listing: Listing, photo_analysis: PhotoAnalysis, comps: List[Dict[str, Any]]) -> CompAnalysis:
     median_comp_price = None
     avg_comp_age_months = None
     num_comps = len(comps)
@@ -277,19 +243,12 @@ def compute_comp_analysis(
 # Deal scoring
 # ---------------------------------------------------------------------
 
-def compute_deal_scores(
-    listing: Listing,
-    photo_analysis: PhotoAnalysis,
-    system_ratings: SystemRatings,
-    comp_analysis: CompAnalysis,
-    package_seller_score: float
-) -> DealScores:
+def compute_deal_scores(listing: Listing, photo_analysis: PhotoAnalysis, system_ratings: SystemRatings, comp_analysis: CompAnalysis, package_seller_score: float) -> DealScores:
     financial_score = ai_compute_financial_score(listing)
 
-    # Condition score: systems + distress
     condition_base = system_ratings.system_condition_score
     if photo_analysis.distress_evidence:
-        condition_base *= 0.3  # severe distress
+        condition_base *= 0.3
 
     condition_score = max(0.0, min(1.0, condition_base))
 
@@ -320,7 +279,6 @@ def generate_questionnaire(analysis: ListingAnalysis) -> Dict[str, Any]:
 
     sections = []
 
-    # Kitchen
     sections.append({
         "title": "Kitchen",
         "questions": [
@@ -332,7 +290,6 @@ def generate_questionnaire(analysis: ListingAnalysis) -> Dict[str, Any]:
         ]
     })
 
-    # Furnace
     sections.append({
         "title": "Furnace / Heating",
         "questions": [
@@ -344,7 +301,6 @@ def generate_questionnaire(analysis: ListingAnalysis) -> Dict[str, Any]:
         ]
     })
 
-    # Water heater
     sections.append({
         "title": "Water Heater",
         "questions": [
@@ -355,7 +311,6 @@ def generate_questionnaire(analysis: ListingAnalysis) -> Dict[str, Any]:
         ]
     })
 
-    # Distress evidence
     if pa.distress_evidence:
         sections.append({
             "title": "Distress Evidence",
@@ -368,7 +323,6 @@ def generate_questionnaire(analysis: ListingAnalysis) -> Dict[str, Any]:
             ]
         })
 
-    # Vacancy / utilities
     sections.append({
         "title": "Vacancy & Utilities",
         "questions": [
@@ -379,7 +333,6 @@ def generate_questionnaire(analysis: ListingAnalysis) -> Dict[str, Any]:
         ]
     })
 
-    # Seller motivation / portfolio
     sections.append({
         "title": "Seller Motivation & Portfolio",
         "questions": [
@@ -391,7 +344,6 @@ def generate_questionnaire(analysis: ListingAnalysis) -> Dict[str, Any]:
         ]
     })
 
-    # Legal / financial
     sections.append({
         "title": "Legal & Financial",
         "questions": [
@@ -403,7 +355,6 @@ def generate_questionnaire(analysis: ListingAnalysis) -> Dict[str, Any]:
         ]
     })
 
-    # Walkthrough checklist
     checklist = {
         "exterior": [
             "Roof condition",
@@ -462,34 +413,53 @@ def generate_questionnaire(analysis: ListingAnalysis) -> Dict[str, Any]:
 # Main search entrypoint
 # ---------------------------------------------------------------------
 
-def search_listings(
-    city: str,
-    state: str,
-    include_photos: bool = False
-) -> List[ListingAnalysis]:
-    """
-    Unified entrypoint:
-    - fetch from all sources
-    - analyze photos, systems, comps, deal score
-    - generate questionnaire/checklist
-    """
-    listings: List[Listing] = []
-    listings += fetch_redfin(city, state, include_photos)
-    listings += fetch_zillow(city, state, include_photos)
-    listings += fetch_realtor(city, state, include_photos)
-    listings += fetch_craigslist(city, state, include_photos)
+def search_listings(city: str, state: str, include_photos: bool = False) -> List[ListingAnalysis]:
+    listings_raw = []
 
-    analyses: List[ListingAnalysis] = []
+    # Pull from all scrapers
+    scrapers = [
+        ("Redfin", fetch_redfin),
+        ("Zillow", fetch_zillow),
+        ("Realtor", fetch_realtor),
+        ("Craigslist", fetch_craigslist),
+        ("Facebook", fetch_facebook),
+    ]
 
-    for listing in listings:
+    for source_name, scraper in scrapers:
+        try:
+            results = scraper(city, state, limit=20)
+            for r in results:
+                listings_raw.append((source_name, r))
+        except Exception:
+            continue
+
+    analyses = []
+
+    for source_name, raw in listings_raw:
+        listing = Listing(
+            source=source_name,
+            source_id=raw.get("address", ""),
+            address=raw.get("address", ""),
+            city=raw.get("city", city),
+            state=raw.get("state", state),
+            price=float(raw.get("asking_price", 0)),
+            beds=None,
+            baths=None,
+            sqft=None,
+            year_built=None,
+            photos=[],
+            description="",
+            seller_contact=None,
+            raw_data=raw
+        )
+
         photo_analysis = ai_estimate_photo_age_and_distress(listing.photos, listing.description)
         system_ratings = ai_rate_systems(listing.photos, listing.description)
 
-        # TODO: fetch real comps for this listing
-        comps: List[Dict[str, Any]] = []
+        comps = []
         comp_analysis = compute_comp_analysis(listing, photo_analysis, comps)
 
-        package_seller_score = ai_detect_package_seller(listing, listings)
+        package_seller_score = ai_detect_package_seller(listing, [])
 
         deal_scores = compute_deal_scores(
             listing=listing,
@@ -499,8 +469,7 @@ def search_listings(
             package_seller_score=package_seller_score,
         )
 
-        # Temporary placeholder; we regenerate after we have the object
-        dummy_analysis = ListingAnalysis(
+        dummy = ListingAnalysis(
             listing=listing,
             photo_analysis=photo_analysis,
             system_ratings=system_ratings,
@@ -508,17 +477,19 @@ def search_listings(
             deal_scores=deal_scores,
             questionnaire={}
         )
-        questionnaire = generate_questionnaire(dummy_analysis)
 
-        analysis = ListingAnalysis(
-            listing=listing,
-            photo_analysis=photo_analysis,
-            system_ratings=system_ratings,
-            comp_analysis=comp_analysis,
-            deal_scores=deal_scores,
-            questionnaire=questionnaire
+        questionnaire = generate_questionnaire(dummy)
+
+        analyses.append(
+            ListingAnalysis(
+                listing=listing,
+                photo_analysis=photo_analysis,
+                system_ratings=system_ratings,
+                comp_analysis=comp_analysis,
+                deal_scores=deal_scores,
+                questionnaire=questionnaire
+            )
         )
-        analyses.append(analysis)
 
     return analyses
 
@@ -539,8 +510,9 @@ def serialize_analysis(analysis: ListingAnalysis) -> Dict[str, Any]:
 
 
 if __name__ == "__main__":
-    # Simple manual test stub
     results = search_listings("Cleveland", "OH", include_photos=False)
     print(f"Found {len(results)} listings")
     for r in results[:3]:
         print(serialize_analysis(r))
+
+
