@@ -6,7 +6,9 @@ from typing import Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
+from pathlib import Path
 
 from database import get_all_listings, init_db, upsert_listing
 from server.engine import ListingAnalysis, search_listings, serialize_analysis
@@ -25,6 +27,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+STATIC_DIR = Path(__file__).resolve().parent / "static"
+UI_INDEX = STATIC_DIR / "index.html"
 
 
 @app.on_event("startup")
@@ -77,4 +82,9 @@ async def analyze(
 
 @app.get("/")
 async def root():
+    return FileResponse(UI_INDEX)
+
+
+@app.get("/status")
+async def status():
     return {"status": "House Deal Scraper Backend Running"}

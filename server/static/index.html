@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>House Deal Scraper</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b1020;
+      --panel: #151d33;
+      --border: #2d3651;
+      --text: #f4f7ff;
+      --muted: #9fb0d9;
+      --accent: #5b8cff;
+      --error: #ff6f6f;
+    }
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+    .panel {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    h1, h2 {
+      margin-top: 0;
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: end;
+    }
+    label {
+      font-size: 14px;
+      color: var(--muted);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    input[type="text"] {
+      background: #0e1426;
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px;
+      border-radius: 8px;
+      min-width: 160px;
+    }
+    button {
+      background: var(--accent);
+      border: none;
+      color: white;
+      padding: 10px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 600;
+    }
+    button.secondary {
+      background: #293353;
+    }
+    .result-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 10px;
+      background: #0d1429;
+    }
+    .muted {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    .error {
+      color: var(--error);
+      font-weight: 600;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>House Deal Scraper</h1>
+    <p class="muted">Backend + UI running on the same deployment.</p>
+
+    <div class="panel">
+      <h2>Analyze Listings</h2>
+      <div class="row">
+        <label>
+          City
+          <input id="city" type="text" placeholder="Detroit" />
+        </label>
+        <label>
+          State
+          <input id="state" type="text" placeholder="MI" maxlength="2" />
+        </label>
+        <label>
+          <input id="photos" type="checkbox" />
+          Include photos
+        </label>
+        <button id="analyzeBtn">Run Analyze</button>
+      </div>
+      <p id="analyzeStatus" class="muted"></p>
+      <div id="analyzeResults"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Saved Listings</h2>
+      <div class="row">
+        <button id="loadListingsBtn" class="secondary">Load Listings</button>
+      </div>
+      <p id="listingsStatus" class="muted"></p>
+      <div id="listingsResults"></div>
+    </div>
+  </div>
+
+  <script>
+    const analyzeBtn = document.getElementById("analyzeBtn");
+    const loadListingsBtn = document.getElementById("loadListingsBtn");
+    const analyzeStatus = document.getElementById("analyzeStatus");
+    const listingsStatus = document.getElementById("listingsStatus");
+    const analyzeResults = document.getElementById("analyzeResults");
+    const listingsResults = document.getElementById("listingsResults");
+
+    function renderError(container, message) {
+      container.innerHTML = `<p class="error">${message}</p>`;
+    }
+
+    function listingCardHtml(item) {
+      const l = item.listing || item;
+      const source = l.source || "unknown";
+      const price = l.price ?? l.asking_price;
+      const priceText = Number.isFinite(price) ? `$${price.toLocaleString()}` : "N/A";
+      const cityState = [l.city, l.state].filter(Boolean).join(", ");
+      return `
+        <div class="result-card">
+          <div><strong>${l.address || "Unknown address"}</strong></div>
+          <div class="muted">${cityState || "Unknown location"}</div>
+          <div>Price: ${priceText}</div>
+          <div class="muted">Source: ${source}</div>
+        </div>
+      `;
+    }
+
+    analyzeBtn.addEventListener("click", async () => {
+      analyzeResults.innerHTML = "";
+      const city = document.getElementById("city").value.trim();
+      const state = document.getElementById("state").value.trim();
+      const includePhotos = document.getElementById("photos").checked;
+
+      if (!city || !state) {
+        analyzeStatus.textContent = "";
+        renderError(analyzeResults, "City and state are required.");
+        return;
+      }
+
+      analyzeStatus.textContent = "Running analysis...";
+      try {
+        const params = new URLSearchParams({
+          city,
+          state,
+          include_photos: String(includePhotos),
+        });
+        const response = await fetch(`/analyze?${params.toString()}`);
+        if (!response.ok) {
+          throw new Error(`Request failed: ${response.status}`);
+        }
+        const data = await response.json();
+        analyzeStatus.textContent = `Found ${data.length} analyzed listing(s).`;
+        if (!Array.isArray(data) || data.length === 0) {
+          analyzeResults.innerHTML = `<p class="muted">No listings returned.</p>`;
+          return;
+        }
+        analyzeResults.innerHTML = data.map(listingCardHtml).join("");
+      } catch (err) {
+        analyzeStatus.textContent = "";
+        renderError(analyzeResults, `Analyze failed: ${err.message}`);
+      }
+    });
+
+    loadListingsBtn.addEventListener("click", async () => {
+      listingsResults.innerHTML = "";
+      listingsStatus.textContent = "Loading saved listings...";
+      try {
+        const response = await fetch("/listings");
+        if (!response.ok) {
+          throw new Error(`Request failed: ${response.status}`);
+        }
+        const data = await response.json();
+        const listings = data.listings || [];
+        listingsStatus.textContent = `Loaded ${listings.length} saved listing(s).`;
+        if (!listings.length) {
+          listingsResults.innerHTML = `<p class="muted">No saved listings yet.</p>`;
+          return;
+        }
+        listingsResults.innerHTML = listings.map(listingCardHtml).join("");
+      } catch (err) {
+        listingsStatus.textContent = "";
+        renderError(listingsResults, `Load failed: ${err.message}`);
+      }
+    });
+  </script>
+</body>
+</html>
