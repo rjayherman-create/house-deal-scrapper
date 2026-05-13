@@ -24,6 +24,7 @@ from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 import math
+import re
 
 # Import real scrapers
 from server.scrapers.redfin import fetch_redfin
@@ -415,6 +416,25 @@ def generate_questionnaire(analysis: ListingAnalysis) -> Dict[str, Any]:
 
 def search_listings(city: str, state: str, include_photos: bool = False) -> List[ListingAnalysis]:
     listings_raw = []
+    seen_listings = set()
+
+    def parse_price(value: Any) -> Optional[float]:
+        if value is None:
+            return None
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        text = str(value).strip()
+        if not text:
+            return None
+
+        cleaned = re.sub(r"[^\d.]", "", text)
+        if not cleaned:
+            return None
+        try:
+            return float(cleaned)
+        except ValueError:
+            return None
 
     # Pull from all scrapers
     scrapers = [
@@ -429,7 +449,25 @@ def search_listings(city: str, state: str, include_photos: bool = False) -> List
         try:
             results = scraper(city, state, limit=20)
             for r in results:
-                listings_raw.append((source_name, r))
+                address = (r.get("address") or "").strip()
+                price = parse_price(r.get("asking_price"))
+                if not address or price is None:
+                    continue
+
+                dedupe_key = (
+                    source_name.lower(),
+                    address.lower(),
+                    (r.get("city") or city).lower(),
+                    (r.get("state") or state).lower(),
+                )
+                if dedupe_key in seen_listings:
+                    continue
+                seen_listings.add(dedupe_key)
+
+                normalized = dict(r)
+                normalized["address"] = address
+                normalized["asking_price"] = price
+                listings_raw.append((source_name, normalized))
         except Exception:
             continue
 
@@ -442,7 +480,7 @@ def search_listings(city: str, state: str, include_photos: bool = False) -> List
             address=raw.get("address", ""),
             city=raw.get("city", city),
             state=raw.get("state", state),
-            price=float(raw.get("asking_price", 0)),
+            price=raw["asking_price"],
             beds=None,
             baths=None,
             sqft=None,
