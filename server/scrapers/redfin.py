@@ -1,11 +1,12 @@
 import csv
 import io
 import re
+from typing import Any
 
 import requests
 
 
-def _clean_price(value):
+def _clean_price(value: Any) -> str:
     if value is None:
         return ""
     return re.sub(r"[^\d.]", "", str(value))

@@ -16,7 +16,7 @@ def _clean_price(value: Any) -> str:
 def _extract_listing_candidates(node: Any, results: List[Dict[str, Any]]) -> None:
     if isinstance(node, dict):
         lower_keys = {str(k).lower(): k for k in node.keys()}
-        has_address = any(k in lower_keys for k in ("street", "line", "address", "full_address", "href"))
+        has_address = any(k in lower_keys for k in ("street", "line", "address", "full_address"))
         has_price = any(k in lower_keys for k in ("list_price", "price", "price_raw", "listprice"))
 
         if has_address and has_price:
@@ -68,7 +68,6 @@ def fetch_realtor(city, state, limit):
                 or item.get("line")
                 or address_obj.get("line")
                 or address_obj.get("street_name")
-                or item.get("href")
                 or ""
             )
             if not address:
