@@ -100,18 +100,16 @@
     <div class="panel">
       <h2>Analyze Listings</h2>
       <div class="row">
-        <label>
+        <label for="city">
           City
           <input id="city" type="text" placeholder="Detroit" />
         </label>
-        <label>
+        <label for="state">
           State
           <input id="state" type="text" placeholder="MI" maxlength="2" />
         </label>
-        <label class="inline">
-          <input id="photos" type="checkbox" />
-          Include photos
-        </label>
+        <input id="photos" type="checkbox" />
+        <label class="inline" for="photos">Include photos</label>
         <button id="analyzeBtn">Run Analyze</button>
       </div>
       <p id="analyzeStatus" class="muted"></p>
@@ -144,20 +142,53 @@
       container.appendChild(p);
     }
 
-    function listingCardHtml(item) {
+    function createListingCard(item) {
       const l = item.listing || item;
       const source = l.source || "unknown";
       const price = l.price ?? l.asking_price;
       const priceText = Number.isFinite(price) ? `$${price.toLocaleString()}` : "N/A";
       const cityState = [l.city, l.state].filter(Boolean).join(", ");
-      return `
-        <div class="result-card">
-          <div><strong>${l.address || "Unknown address"}</strong></div>
-          <div class="muted">${cityState || "Unknown location"}</div>
-          <div>Price: ${priceText}</div>
-          <div class="muted">Source: ${source}</div>
-        </div>
-      `;
+      const card = document.createElement("div");
+      card.className = "result-card";
+
+      const titleRow = document.createElement("div");
+      const title = document.createElement("strong");
+      title.textContent = l.address || "Unknown address";
+      titleRow.appendChild(title);
+      card.appendChild(titleRow);
+
+      const location = document.createElement("div");
+      location.className = "muted";
+      location.textContent = cityState || "Unknown location";
+      card.appendChild(location);
+
+      const priceRow = document.createElement("div");
+      priceRow.textContent = `Price: ${priceText}`;
+      card.appendChild(priceRow);
+
+      const sourceRow = document.createElement("div");
+      sourceRow.className = "muted";
+      sourceRow.textContent = `Source: ${source}`;
+      card.appendChild(sourceRow);
+
+      return card;
+    }
+
+    function renderMutedMessage(container, message) {
+      container.textContent = "";
+      const p = document.createElement("p");
+      p.className = "muted";
+      p.textContent = message;
+      container.appendChild(p);
+    }
+
+    function renderListingCards(container, items) {
+      container.textContent = "";
+      const fragment = document.createDocumentFragment();
+      for (const item of items) {
+        fragment.appendChild(createListingCard(item));
+      }
+      container.appendChild(fragment);
     }
 
     analyzeBtn.addEventListener("click", async () => {
@@ -186,11 +217,11 @@
         const data = await response.json();
         if (!Array.isArray(data) || data.length === 0) {
           analyzeStatus.textContent = "Found 0 analyzed listing(s).";
-          analyzeResults.innerHTML = `<p class="muted">No listings returned.</p>`;
+          renderMutedMessage(analyzeResults, "No listings returned.");
           return;
         }
         analyzeStatus.textContent = `Found ${data.length} analyzed listing(s).`;
-        analyzeResults.innerHTML = data.map(listingCardHtml).join("");
+        renderListingCards(analyzeResults, data);
       } catch (err) {
         analyzeStatus.textContent = "";
         renderError(analyzeResults, `Analyze failed: ${err.message}`);
@@ -209,11 +240,11 @@
         const listings = data.listings || [];
         if (!listings.length) {
           listingsStatus.textContent = "Loaded 0 saved listing(s).";
-          listingsResults.innerHTML = `<p class="muted">No saved listings yet.</p>`;
+          renderMutedMessage(listingsResults, "No saved listings yet.");
           return;
         }
         listingsStatus.textContent = `Loaded ${listings.length} saved listing(s).`;
-        listingsResults.innerHTML = listings.map(listingCardHtml).join("");
+        renderListingCards(listingsResults, listings);
       } catch (err) {
         listingsStatus.textContent = "";
         renderError(listingsResults, `Load failed: ${err.message}`);
