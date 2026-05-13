@@ -2,8 +2,9 @@
 import sqlite3
 from pathlib import Path
 from datetime import datetime
+from typing import Optional
 
-DB_PATH = Path("distressiq.db")
+DB_PATH = Path(__file__).resolve().parent / "distressiq.db"
 
 
 def get_connection():
@@ -229,6 +230,90 @@ def insert_listing(address, city=None, state=None, zip_code=None, source="manual
     conn.commit()
     conn.close()
     return listing_id
+
+
+def upsert_listing(
+    address,
+    city=None,
+    state=None,
+    zip_code=None,
+    source="manual",
+    asking_price=None,
+):
+    conn = get_connection()
+    cur = conn.cursor()
+    cur.execute(
+        """
+        SELECT id
+        FROM listings
+        WHERE lower(address) = lower(?)
+          AND coalesce(lower(city), '') = coalesce(lower(?), '')
+          AND coalesce(lower(state), '') = coalesce(lower(?), '')
+          AND coalesce(lower(source), '') = coalesce(lower(?), '')
+        ORDER BY id DESC
+        LIMIT 1
+        """,
+        (address, city, state, source),
+    )
+    row = cur.fetchone()
+
+    if row:
+        cur.execute(
+            """
+            UPDATE listings
+            SET city = coalesce(?, city),
+                state = coalesce(?, state),
+                zip_code = coalesce(?, zip_code),
+                source = coalesce(?, source),
+                asking_price = coalesce(?, asking_price)
+            WHERE id = ?
+            """,
+            (city, state, zip_code, source, asking_price, row["id"]),
+        )
+        conn.commit()
+        conn.close()
+        return row["id"]
+
+    conn.close()
+    return insert_listing(
+        address=address,
+        city=city,
+        state=state,
+        zip_code=zip_code,
+        source=source,
+        asking_price=asking_price,
+    )
+
+
+def get_all_listings(
+    city: Optional[str] = None,
+    state: Optional[str] = None,
+    limit: int = 100,
+):
+    conn = get_connection()
+    cur = conn.cursor()
+
+    query = "SELECT * FROM listings"
+    clauses = []
+    params = []
+
+    if city:
+        clauses.append("lower(city) = lower(?)")
+        params.append(city)
+    if state:
+        clauses.append("lower(state) = lower(?)")
+        params.append(state)
+
+    if clauses:
+        query += " WHERE " + " AND ".join(clauses)
+
+    query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+    params.append(limit)
+
+    cur.execute(query, params)
+    rows = cur.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
 
 
 if __name__ == "__main__":
