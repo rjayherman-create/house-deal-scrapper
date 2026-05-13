@@ -1,72 +1,79 @@
 """
 FastAPI backend for House Deal Scraper.
-This file exposes API endpoints that call engine.py for:
-- Listing aggregation
-- AI analysis
-- Comp scoring
-- System ratings
-- Questionnaire generation
 """
 
-from fastapi import FastAPI, Query
+from typing import Optional
+
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from server.engine import search_listings, serialize_analysis
+from starlette.concurrency import run_in_threadpool
+
+from database import get_all_listings, init_db, upsert_listing
+from server.engine import ListingAnalysis, search_listings, serialize_analysis
 
 
 app = FastAPI(
     title="House Deal Scraper API",
-    description="Backend for property analysis, AI scoring, and questionnaire generation.",
-    version="1.0.0"
+    description="Backend for property analysis, saved listings, and questionnaire generation.",
+    version="1.0.0",
 )
 
-# Allow GUI, Railway, localhost, etc.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # tighten later if needed
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# ---------------------------------------------------------
-# Health Check
-# ---------------------------------------------------------
+
+@app.on_event("startup")
+def startup() -> None:
+    init_db()
+
+
+def persist_analysis(analysis: ListingAnalysis) -> dict:
+    serialized = serialize_analysis(analysis)
+    raw_listing = analysis.listing.raw_data or {}
+    saved_listing_id = upsert_listing(
+        address=analysis.listing.address,
+        city=analysis.listing.city,
+        state=analysis.listing.state,
+        zip_code=raw_listing.get("zip_code"),
+        source=analysis.listing.source,
+        asking_price=analysis.listing.price,
+    )
+    serialized["listing"]["id"] = saved_listing_id
+    serialized["listing"]["zip_code"] = raw_listing.get("zip_code", "")
+    return serialized
+
 
 @app.get("/health")
 async def health():
     return {"status": "ok", "message": "Backend running"}
 
 
-# ---------------------------------------------------------
-# Main Analysis Endpoint (ASYNC)
-# ---------------------------------------------------------
+@app.get("/listings")
+async def listings(
+    city: Optional[str] = Query(None, description="Optional city filter"),
+    state: Optional[str] = Query(None, description="Optional state filter"),
+    limit: int = Query(100, ge=1, le=500, description="Maximum number of saved listings"),
+):
+    return {"listings": get_all_listings(city=city, state=state, limit=limit)}
+
 
 @app.get("/analyze")
 async def analyze(
     city: str = Query(..., description="City to search"),
     state: str = Query(..., description="State to search"),
-    include_photos: bool = Query(False, description="Fetch photos from all sources")
+    include_photos: bool = Query(False, description="Fetch photos from all sources"),
 ):
-    """
-    Main endpoint:
-    - Scrapes Redfin, Zillow, Realtor, Craigslist, Facebook
-    - Runs AI analysis (photo age, distress, systems)
-    - Computes comp score + deal score
-    - Generates buyer questionnaire + checklist
-    """
     try:
-        results = await search_listings(city, state, include_photos=include_photos)
-        return [serialize_analysis(r) for r in results]
-    except Exception as e:
-        return {
-            "error": True,
-            "message": str(e)
-        }
+        results = await run_in_threadpool(search_listings, city, state, include_photos)
+        return [persist_analysis(result) for result in results]
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="Analysis failed while fetching listings.") from exc
 
-
-# ---------------------------------------------------------
-# Root
-# ---------------------------------------------------------
 
 @app.get("/")
 async def root():
