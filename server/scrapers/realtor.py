@@ -40,7 +40,7 @@ def fetch_realtor(city, state, limit):
             "User-Agent": "Mozilla/5.0",
             "Accept-Language": "en-US,en;q=0.9",
         }
-        city_slug = city.strip().replace(" ", "-")
+        city_slug = city.strip().lower().replace(" ", "-")
         state_slug = state.strip().upper()
         candidate_urls = [
             f"https://www.realtor.com/realestateandhomes-search/{city_slug}_{state_slug}",
