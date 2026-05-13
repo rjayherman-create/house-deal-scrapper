@@ -1,4 +1,14 @@
+import csv
+import io
+import re
+
 import requests
+
+
+def _clean_price(value):
+    if value is None:
+        return ""
+    return re.sub(r"[^\d.]", "", str(value))
 
 def fetch_redfin(city, state, limit):
     """
@@ -7,10 +17,10 @@ def fetch_redfin(city, state, limit):
     """
     try:
         url = (
-            f"https://redfin.com/stingray/api/gis-csv"
-            f"?al=1&market={state}&num_homes={limit}&region_id=0"
+            f"https://www.redfin.com/stingray/api/gis-csv"
+            f"?al=1&num_homes={limit}&region_id=0"
             f"&region_type=6&status=1&uipt=1,2,3,4,5,6,7"
-            f"&v=8&city={city.replace(' ', '%20')}"
+            f"&v=8&city={city.replace(' ', '%20')}&state={state}"
         )
 
         headers = {
@@ -22,21 +32,28 @@ def fetch_redfin(city, state, limit):
         if resp.status_code != 200:
             return []
 
-        lines = resp.text.split("\n")
+        reader = csv.DictReader(io.StringIO(resp.text))
         results = []
 
-        for line in lines[1:limit+1]:
-            parts = line.split(",")
-            if len(parts) < 10:
+        for row in reader:
+            address = row.get("ADDRESS") or row.get("Street Line")
+            price = row.get("PRICE") or row.get("Price")
+            if not address or not price:
+                continue
+
+            asking_price = _clean_price(price)
+            if not asking_price:
                 continue
 
             results.append({
-                "address": parts[2],
-                "city": city,
-                "state": state,
-                "zip_code": parts[3],
-                "asking_price": parts[4].replace("$", "").replace(",", "")
+                "address": address,
+                "city": row.get("CITY") or city,
+                "state": row.get("STATE OR PROVINCE") or state,
+                "zip_code": row.get("ZIP OR POSTAL CODE", ""),
+                "asking_price": asking_price
             })
+            if len(results) >= limit:
+                break
 
         return results
 
