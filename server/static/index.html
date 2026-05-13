@@ -49,6 +49,12 @@
       flex-direction: column;
       gap: 6px;
     }
+    label.inline {
+      flex-direction: row;
+      align-items: center;
+      gap: 8px;
+      color: var(--text);
+    }
     input[type="text"] {
       background: #0e1426;
       border: 1px solid var(--border);
@@ -102,7 +108,7 @@
           State
           <input id="state" type="text" placeholder="MI" maxlength="2" />
         </label>
-        <label>
+        <label class="inline" for="photos">
           <input id="photos" type="checkbox" />
           Include photos
         </label>
@@ -131,7 +137,11 @@
     const listingsResults = document.getElementById("listingsResults");
 
     function renderError(container, message) {
-      container.innerHTML = `<p class="error">${message}</p>`;
+      container.textContent = "";
+      const p = document.createElement("p");
+      p.className = "error";
+      p.textContent = message;
+      container.appendChild(p);
     }
 
     function listingCardHtml(item) {
