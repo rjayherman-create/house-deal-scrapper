@@ -6,7 +6,7 @@ from typing import Any
 import requests
 
 
-def _clean_price(value: Any) -> str:
+def _extract_digits(value: Any) -> str:
     if value is None:
         return ""
     return re.sub(r"[^\d.]", "", str(value))
@@ -42,7 +42,7 @@ def fetch_redfin(city, state, limit):
             if not address or not price:
                 continue
 
-            asking_price = _clean_price(price)
+            asking_price = _extract_digits(price)
             if not asking_price:
                 continue
 

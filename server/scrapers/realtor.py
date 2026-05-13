@@ -6,7 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 
 
-def _clean_price(value: Any) -> str:
+def _extract_digits(value: Any) -> str:
     if value is None:
         return ""
     digits = re.sub(r"[^\d.]", "", str(value))
@@ -74,12 +74,17 @@ def fetch_realtor(city, state, limit):
                 continue
 
             price_raw = item.get("list_price") or item.get("price") or item.get("price_raw") or item.get("listPrice")
-            asking_price = _clean_price(price_raw)
+            asking_price = _extract_digits(price_raw)
             if not asking_price:
                 continue
 
             normalized = address.strip()
-            dedupe_key = (normalized.lower(), asking_price)
+            dedupe_key = (
+                normalized.lower(),
+                (city or "").lower(),
+                (state or "").lower(),
+                asking_price,
+            )
             if dedupe_key in seen:
                 continue
             seen.add(dedupe_key)
