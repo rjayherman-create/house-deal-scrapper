@@ -415,9 +415,22 @@ def build_ai_summary(property_data: Mapping[str, Any], deal_score: int) -> str:
         indicators.append("- Probate")
 
     indicator_text = "\n".join(indicators) if indicators else "- No major distress flags confirmed yet"
+    score_details = property_data.get("scoreDetails") if isinstance(property_data.get("scoreDetails"), Mapping) else {}
+    reasons = score_details.get("reasons") if isinstance(score_details.get("reasons"), list) else []
+    reason_text = "\n".join(f"- {reason}" for reason in reasons[:5]) if reasons else "- Score uses available price, rent, source, photo, and distress data."
+    rent_yield = _num(score_details.get("rent_yield"))
+    price_discount = _num(score_details.get("price_discount"))
+    metrics = []
+    if rent_yield is not None:
+        metrics.append(f"Rent yield: {rent_yield * 100:.1f}%")
+    if price_discount is not None:
+        metrics.append(f"Price discount: {price_discount * 100:.1f}%")
+    metric_text = "\n".join(f"- {metric}" for metric in metrics) if metrics else "- Rent yield and price discount are estimated from available data."
     return (
         "Potential distressed opportunity.\n\n"
         f"Indicators:\n{indicator_text}\n\n"
+        f"Score drivers:\n{reason_text}\n\n"
+        f"Score metrics:\n{metric_text}\n\n"
         f"Estimated value: ${_num(property_data.get('estimatedValue') or property_data.get('estimated_value')) or 0:,.0f}\n"
         f"Estimated rent: ${_num(property_data.get('estimatedRent') or property_data.get('estimated_rent')) or 0:,.0f}\n\n"
         f"Deal Score: {deal_score}/100"
@@ -521,7 +534,7 @@ def ingest_property_from_analysis(analysis: Any, source_listing_id: Optional[int
         "lotSize": _first(property_record, "lotSize", "lot_size"),
         "yearBuilt": listing.year_built or _first(property_record, "yearBuilt", "year_built"),
         "estimatedValue": _estimate_from(raw, "value_estimate") or listing.price,
-        "estimatedRent": _estimate_from(raw, "rent_estimate"),
+        "estimatedRent": _estimate_from(raw, "rent_estimate") or _num(_first(raw, "low_cost_rent_estimate", "section8_estimate")),
         "taxAmountDue": _first(property_record, "taxAmountDue", "tax_amount_due"),
         "ownerName": _first(property_record, "ownerName", "owner_name"),
         "sourceUrl": _first(raw, "source_url", "url", "listingUrl"),
@@ -533,6 +546,7 @@ def ingest_property_from_analysis(analysis: Any, source_listing_id: Optional[int
         "codeViolations": _first(raw, "codeViolations", "code_violations") or False,
         "probate": _first(raw, "probate") or False,
         "analysisDealScore": analysis.deal_scores.final_score,
+        "scoreDetails": _jsonable(analysis.deal_scores),
         "status": "ANALYZED",
         "sourceListingId": source_listing_id,
         "raw_listing": raw,

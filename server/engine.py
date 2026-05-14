@@ -110,7 +110,13 @@ class DealScores:
     comp_score: float
     condition_score: float
     package_seller_score: float
+    distress_score: float
+    data_confidence_score: float
+    rent_yield: Optional[float]
+    price_discount: Optional[float]
     final_score: float
+    score_label: str
+    reasons: List[str]
 
 
 @dataclass
@@ -181,39 +187,147 @@ def ai_rate_systems(photos: List[str], description: str) -> SystemRatings:
     )
 
 
-def ai_compute_financial_score(listing: Listing) -> float:
+def _estimate_value(listing: Listing) -> Optional[float]:
     value_estimate = listing.raw_data.get("value_estimate") or {}
-    rent_estimate = listing.raw_data.get("rent_estimate") or {}
-    estimated_value = parse_optional_float(
+    return parse_optional_float(
         value_estimate.get("price")
         or value_estimate.get("value")
         or value_estimate.get("estimatedValue")
         or value_estimate.get("median")
+        or listing.raw_data.get("estimatedValue")
+        or listing.raw_data.get("estimated_value")
+        or listing.raw_data.get("valueEstimate")
     )
-    estimated_rent = parse_optional_float(
+
+
+def _estimate_rent(listing: Listing) -> Optional[float]:
+    rent_estimate = listing.raw_data.get("rent_estimate") or {}
+    return parse_optional_float(
         rent_estimate.get("rent")
         or rent_estimate.get("price")
         or rent_estimate.get("estimatedRent")
         or rent_estimate.get("median")
         or listing.raw_data.get("low_cost_rent_estimate")
         or listing.raw_data.get("section8_estimate")
+        or listing.raw_data.get("estimatedRent")
+        or listing.raw_data.get("estimated_rent")
+        or listing.raw_data.get("rentEstimate")
     )
 
+
+def ai_compute_financial_score(listing: Listing) -> tuple[float, Optional[float], Optional[float], list[str]]:
+    estimated_value = _estimate_value(listing)
+    estimated_rent = _estimate_rent(listing)
+    reasons: list[str] = []
     price_score = 0.5
+    price_discount = None
     if estimated_value and listing.price:
-        discount = (estimated_value - listing.price) / estimated_value
-        price_score = max(0.0, min(1.0, 0.45 + discount * 1.6))
+        price_discount = (estimated_value - listing.price) / estimated_value
+        price_score = max(0.0, min(1.0, 0.45 + price_discount * 1.8))
+        if price_discount >= 0.25:
+            reasons.append("Asking price is at least 25% below estimated value.")
+        elif price_discount <= -0.10:
+            reasons.append("Asking price appears above estimated value.")
+    else:
+        reasons.append("No value estimate available, so price discount is uncertain.")
 
     rent_score = 0.5
+    rent_yield = None
     if estimated_rent and listing.price:
-        annual_rent_yield = (estimated_rent * 12) / listing.price
-        rent_score = max(0.0, min(1.0, annual_rent_yield / 0.14))
+        rent_yield = (estimated_rent * 12) / listing.price
+        rent_score = max(0.0, min(1.0, rent_yield / 0.14))
+        if rent_yield >= 0.15:
+            reasons.append("Rent-to-price ratio is strong.")
+        elif rent_yield < 0.08:
+            reasons.append("Rent-to-price ratio is weak.")
+    else:
+        reasons.append("No rent estimate available, so cashflow is uncertain.")
 
-    return round(0.7 * price_score + 0.3 * rent_score, 3)
+    return round(0.58 * price_score + 0.42 * rent_score, 3), rent_yield, price_discount, reasons
 
 
 def ai_detect_package_seller(listing: Listing, all_listings: List[Listing]) -> float:
     return 0.3
+
+
+def compute_distress_score(listing: Listing, photo_analysis: PhotoAnalysis) -> tuple[float, list[str]]:
+    raw = listing.raw_data
+    score = 0.0
+    reasons: list[str] = []
+    checks = [
+        ("taxDelinquent", "Tax delinquency flag found.", 0.25),
+        ("tax_delinquent", "Tax delinquency flag found.", 0.25),
+        ("foreclosure", "Foreclosure flag found.", 0.25),
+        ("vacant", "Vacancy flag found.", 0.20),
+        ("absenteeOwner", "Absentee owner flag found.", 0.12),
+        ("absentee_owner", "Absentee owner flag found.", 0.12),
+        ("codeViolations", "Code violation flag found.", 0.10),
+        ("code_violations", "Code violation flag found.", 0.10),
+        ("probate", "Probate flag found.", 0.08),
+    ]
+    used_messages = set()
+    for key, message, weight in checks:
+        if raw.get(key):
+            score += weight
+            if message not in used_messages:
+                reasons.append(message)
+                used_messages.add(message)
+    text = " ".join([listing.description or "", str(raw.get("status") or ""), str(raw.get("listingType") or "")]).lower()
+    for keyword, message in [
+        ("cash only", "Cash-only language indicates possible distress."),
+        ("as-is", "As-is language indicates possible rehab need."),
+        ("needs work", "Listing mentions needed work."),
+        ("fixer", "Listing appears to be a fixer."),
+        ("vacant", "Listing text mentions vacancy."),
+        ("foreclosure", "Listing text mentions foreclosure."),
+    ]:
+        if keyword in text:
+            score += 0.08
+            reasons.append(message)
+    if photo_analysis.distress_evidence:
+        score += 0.15
+        reasons.append("Photo analysis detected distress evidence.")
+    if not reasons:
+        reasons.append("No major distress flags were confirmed.")
+    return min(score, 1.0), reasons[:5]
+
+
+def compute_data_confidence_score(listing: Listing, comps: List[Dict[str, Any]]) -> tuple[float, list[str]]:
+    score = 0.2
+    reasons: list[str] = []
+    if listing.source:
+        score += 0.12
+    if listing.raw_data.get("source_url"):
+        score += 0.16
+        reasons.append("Listing has a source URL.")
+    if listing.photos:
+        score += 0.16
+        reasons.append("Listing photos are available.")
+    if listing.beds or listing.baths:
+        score += 0.12
+    if listing.sqft:
+        score += 0.10
+    if _estimate_value(listing):
+        score += 0.12
+    if _estimate_rent(listing):
+        score += 0.10
+    if comps:
+        score += 0.12
+        reasons.append("Comparable records are available.")
+    if not reasons:
+        reasons.append("Limited source data; score is conservative.")
+    return min(score, 1.0), reasons[:4]
+
+
+def score_label(score: float) -> str:
+    points = round(score * 100 if score <= 1 else score)
+    if points >= 85:
+        return "Very strong deal candidate"
+    if points >= 70:
+        return "Strong review candidate"
+    if points >= 50:
+        return "Worth reviewing"
+    return "Weak or incomplete deal signal"
 
 
 # ---------------------------------------------------------------------
@@ -321,27 +435,38 @@ def compute_comp_analysis(listing: Listing, photo_analysis: PhotoAnalysis, comps
 # ---------------------------------------------------------------------
 
 def compute_deal_scores(listing: Listing, photo_analysis: PhotoAnalysis, system_ratings: SystemRatings, comp_analysis: CompAnalysis, package_seller_score: float) -> DealScores:
-    financial_score = ai_compute_financial_score(listing)
+    financial_score, rent_yield, price_discount, financial_reasons = ai_compute_financial_score(listing)
 
-    condition_base = system_ratings.system_condition_score
+    condition_base = system_ratings.system_condition_score if listing.photos else 0.45
     if photo_analysis.distress_evidence:
         condition_base *= 0.3
 
     condition_score = max(0.0, min(1.0, condition_base))
+    comps = extract_rentcast_comps(listing.raw_data.get("value_estimate") or {})
+    distress_score, distress_reasons = compute_distress_score(listing, photo_analysis)
+    data_confidence_score, confidence_reasons = compute_data_confidence_score(listing, comps)
 
     final_score = (
         0.40 * financial_score +
-        0.30 * comp_analysis.comp_score +
-        0.20 * condition_score +
-        0.10 * package_seller_score
+        0.18 * comp_analysis.comp_score +
+        0.14 * condition_score +
+        0.16 * distress_score +
+        0.12 * data_confidence_score
     )
+    reasons = (financial_reasons + distress_reasons + confidence_reasons)[:7]
 
     return DealScores(
         financial_score=financial_score,
         comp_score=comp_analysis.comp_score,
         condition_score=condition_score,
         package_seller_score=package_seller_score,
-        final_score=final_score
+        distress_score=distress_score,
+        data_confidence_score=data_confidence_score,
+        rent_yield=rent_yield,
+        price_discount=price_discount,
+        final_score=round(final_score, 3),
+        score_label=score_label(final_score),
+        reasons=reasons,
     )
 
 
@@ -511,6 +636,16 @@ def extract_rentcast_comps(value_estimate: Dict[str, Any]) -> List[Dict[str, Any
 
 
 def enrich_listing(listing: Listing) -> Listing:
+    merged_raw = dict(listing.raw_data)
+    merged_raw["low_cost_rent_estimate"] = estimate_rent({
+        "bedrooms": listing.beds,
+        "sqft": listing.sqft,
+        "city": listing.city,
+        "state": listing.state,
+    })
+    merged_raw["section8_estimate"] = estimate_section8_rent(listing.beds, listing.city, listing.state)
+    listing.raw_data = merged_raw
+
     if not is_rentcast_enabled():
         return listing
 
@@ -528,17 +663,9 @@ def enrich_listing(listing: Listing) -> Listing:
     except Exception:
         rent_estimate = {}
 
-    merged_raw = dict(listing.raw_data)
     merged_raw["property_record"] = property_record
     merged_raw["value_estimate"] = value_estimate
     merged_raw["rent_estimate"] = rent_estimate
-    merged_raw["low_cost_rent_estimate"] = estimate_rent({
-        "bedrooms": listing.beds,
-        "sqft": listing.sqft,
-        "city": listing.city,
-        "state": listing.state,
-    })
-    merged_raw["section8_estimate"] = estimate_section8_rent(listing.beds, listing.city, listing.state)
 
     subject = value_estimate.get("subjectProperty") if isinstance(value_estimate, dict) else {}
     subject = subject if isinstance(subject, dict) else {}

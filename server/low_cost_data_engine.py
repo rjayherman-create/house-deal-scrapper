@@ -115,15 +115,19 @@ def enrich_property_low_cost(property_data: Mapping[str, Any]) -> dict[str, Any]
 
 
 def calculate_low_cost_deal_score(property_data: Mapping[str, Any]) -> int:
-    score = 0
+    score = 20
     if property_data.get("taxDelinquent") or property_data.get("tax_delinquent"):
-        score += 25
+        score += 18
     if property_data.get("foreclosure"):
-        score += 25
+        score += 18
     if property_data.get("vacant"):
-        score += 20
+        score += 14
     if property_data.get("absenteeOwner") or property_data.get("absentee_owner"):
-        score += 10
+        score += 8
+    if property_data.get("photos"):
+        score += 5
+    if property_data.get("sourceUrl") or property_data.get("source_url"):
+        score += 5
 
     estimated_value = property_data.get("estimatedValue") or property_data.get("estimated_value")
     rent_estimate = property_data.get("rentEstimate") or property_data.get("estimatedRent")
@@ -134,11 +138,25 @@ def calculate_low_cost_deal_score(property_data: Mapping[str, Any]) -> int:
     if ratio >= 0.15:
         score += 25
     elif ratio >= 0.12:
-        score += 15
+        score += 18
     elif ratio >= 0.10:
-        score += 10
+        score += 12
+    elif ratio and ratio < 0.08:
+        score -= 8
 
-    return min(score, 100)
+    asking_price = property_data.get("askingPrice") or property_data.get("asking_price") or property_data.get("price")
+    try:
+        discount = (float(estimated_value) - float(asking_price)) / float(estimated_value)
+    except (TypeError, ValueError, ZeroDivisionError):
+        discount = 0
+    if discount >= 0.25:
+        score += 18
+    elif discount >= 0.10:
+        score += 10
+    elif discount < -0.10:
+        score -= 10
+
+    return max(0, min(score, 100))
 
 
 def analyze_low_cost_property(property_data: Mapping[str, Any]) -> dict[str, Any]:

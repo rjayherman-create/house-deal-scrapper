@@ -927,7 +927,15 @@
         state: p.state || "",
         zip: p.zip || p.zipCode || p.zip_code || "",
         county: p.county || "",
-        dealScore: Number(p.dealScore ?? p.deal_score ?? raw?.dealScore ?? raw?.deal_score ?? 0),
+        dealScore: Number(
+          p.dealScore
+          ?? p.deal_score
+          ?? p.property_deal_score
+          ?? raw?.dealScore
+          ?? raw?.deal_score
+          ?? (raw?.deal_scores?.final_score ? Math.round(raw.deal_scores.final_score * 100) : 0)
+        ),
+        scoreDetails: raw?.deal_scores || p.scoreDetails || p.score_details || {},
         estimatedRent: p.estimatedRent ?? p.estimated_rent ?? p.rentEstimate ?? p.rent_estimate,
         estimatedValue: p.estimatedValue ?? p.estimated_value ?? p.valueEstimate ?? p.price ?? p.asking_price ?? p.askingPrice,
         taxAmountDue: p.taxAmountDue ?? p.tax_amount_due,
@@ -1115,9 +1123,9 @@
       const grid = document.createElement("div");
       grid.className = "grid detail-grid";
       [
-        ["AI Analysis", [["Summary", property.aiSummary], ["Status", property.status || "N/A"], ["Source", property.sourceName]]],
+        ["AI Analysis", [["Summary", property.aiSummary], ["Status", property.status || "N/A"], ["Source", property.sourceName], ["Score label", property.scoreDetails?.score_label || "N/A"]]],
         ["Distress", [["Tax delinquent", property.tax_delinquent || property.taxDelinquent ? "YES" : "NO"], ["Vacant", property.vacant ? "YES" : "NO"], ["Foreclosure", property.foreclosure ? "YES" : "NO"], ["Absentee owner", property.absentee_owner || property.absenteeOwner ? "YES" : "NO"]]],
-        ["Financials", [["Rent", money(property.estimatedRent)], ["Value", money(property.estimatedValue)], ["Tax due", money(property.taxAmountDue)], ["Rent ratio", property.estimatedRent && property.estimatedValue ? percent((Number(property.estimatedRent) * 12) / Number(property.estimatedValue)) : "N/A"]]],
+        ["Financials", [["Rent", money(property.estimatedRent)], ["Value", money(property.estimatedValue)], ["Tax due", money(property.taxAmountDue)], ["Rent ratio", property.estimatedRent && property.estimatedValue ? percent((Number(property.estimatedRent) * 12) / Number(property.estimatedValue)) : "N/A"], ["Score rent yield", property.scoreDetails?.rent_yield ? percent(property.scoreDetails.rent_yield) : "N/A"]]],
         ["Property Details", [["Beds", property.bedrooms ?? "N/A"], ["Baths", property.bathrooms ?? "N/A"], ["Sqft", property.sqft ?? "N/A"], ["Year built", property.yearBuilt ?? "N/A"]]],
       ].forEach(([heading, values]) => {
         const panel = document.createElement("div");
@@ -1134,6 +1142,18 @@
         grid.appendChild(panel);
       });
       details.appendChild(grid);
+
+      if (property.scoreDetails?.reasons?.length) {
+        const scorePanel = document.createElement("div");
+        scorePanel.className = "mini-panel";
+        scorePanel.innerHTML = `
+          <h3>Score Drivers</h3>
+          <div class="kv">
+            ${property.scoreDetails.reasons.slice(0, 7).map((reason) => `<div><span>${escapeHtml(reason)}</span><strong></strong></div>`).join("")}
+          </div>
+        `;
+        details.appendChild(scorePanel);
+      }
 
       const actions = document.createElement("div");
       actions.className = "actions";
