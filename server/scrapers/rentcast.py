@@ -51,7 +51,7 @@ def check_rentcast(city: str = "Detroit", state: str = "MI") -> Dict[str, Any]:
             "enabled": False,
             "ok": False,
             "status": "premium_disabled",
-            "message": "RentCast is intentionally disabled. Low-cost engine is active by default.",
+            "message": "RentCast is intentionally disabled. Realtime-only mode will not use generated RentCast substitutes.",
             "base_url": RENTCAST_BASE_URL,
         }
     api_key = (os.getenv("RENTCAST_API_KEY") or "").strip()
