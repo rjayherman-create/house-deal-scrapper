@@ -126,6 +126,29 @@ def research_item_score(item: dict) -> int:
         return 0
 
 
+def attach_rent_analysis(rows: list[dict], refresh_missing: bool = False) -> list[dict]:
+    enriched = []
+    for row in rows:
+        item = dict(row)
+        property_id = item.get("id") or item.get("property_intelligence_id")
+        if property_id is None:
+            enriched.append(item)
+            continue
+        try:
+            rent_result = generate_rent_analysis(int(property_id)) if refresh_missing else get_rent_analysis(int(property_id))
+            item["rentAnalysis"] = rent_result.get("analysis") or {}
+            item["rentalComps"] = rent_result.get("comps") or []
+            if item["rentAnalysis"].get("estimated_rent"):
+                item["estimated_rent"] = item["rentAnalysis"]["estimated_rent"]
+                item["estimatedRent"] = item["rentAnalysis"]["estimated_rent"]
+        except Exception as exc:
+            logger.warning("rent analysis attach failed for property %s: %s", property_id, exc)
+            item.setdefault("rentAnalysis", {})
+            item.setdefault("rentalComps", [])
+        enriched.append(item)
+    return enriched
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "message": "Backend running"}
@@ -224,6 +247,8 @@ async def api_research(
         except Exception as exc:
             logger.exception("research database search failed: %s", exc)
             errors.append({"source": "database", "message": str(exc)})
+        else:
+            database_rows = await run_in_threadpool(attach_rent_analysis, database_rows)
 
     if mode in {"live", "both"}:
         if not city or not state:
@@ -431,9 +456,14 @@ async def api_ingest_property(data: dict):
 
 
 @app.get("/api/properties/high-deals")
-async def api_high_deals(limit: int = Query(100, ge=1, le=500)):
+async def api_high_deals(
+    limit: int = Query(100, ge=1, le=500),
+    include_rent_analysis: bool = Query(True),
+):
     try:
         rows = await run_in_threadpool(get_high_deals, limit)
+        if include_rent_analysis:
+            rows = await run_in_threadpool(attach_rent_analysis, rows)
         return {
             "success": True,
             "count": len(rows),
@@ -452,6 +482,7 @@ async def api_search_properties(
     max_price: Optional[float] = Query(None, ge=0),
     min_score: Optional[int] = Query(None, ge=0, le=100),
     limit: int = Query(100, ge=1, le=500),
+    include_rent_analysis: bool = Query(True),
 ):
     try:
         rows = await run_in_threadpool(
@@ -463,6 +494,8 @@ async def api_search_properties(
             min_score,
             limit,
         )
+        if include_rent_analysis:
+            rows = await run_in_threadpool(attach_rent_analysis, rows)
         return {
             "success": True,
             "count": len(rows),
@@ -473,12 +506,30 @@ async def api_search_properties(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.post("/api/properties/rent-analysis/refresh-all")
+async def api_refresh_all_rent_analysis(limit: int = Query(100, ge=1, le=500)):
+    try:
+        rows = await run_in_threadpool(get_high_deals, limit)
+        enriched = await run_in_threadpool(attach_rent_analysis, rows, True)
+        return {
+            "success": True,
+            "count": len(enriched),
+            "data": enriched,
+        }
+    except Exception as exc:
+        logger.exception("bulk rent analysis refresh failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
 @app.get("/api/properties/{property_id}")
 async def api_property_detail(property_id: int):
     try:
         detail = await run_in_threadpool(get_property_detail, property_id)
         if not detail["property"]:
             raise HTTPException(status_code=404, detail="Property not found")
+        rent_result = await run_in_threadpool(get_rent_analysis, property_id)
+        detail["property"]["rentAnalysis"] = rent_result.get("analysis") or {}
+        detail["property"]["rentalComps"] = rent_result.get("comps") or []
         return {
             "success": True,
             **detail,

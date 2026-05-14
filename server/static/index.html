@@ -781,6 +781,7 @@
             <div class="actions">
               <button id="loadListingsBtn" type="button" class="secondary">Load Listings</button>
               <button id="loadDealsBtn" type="button">Load High-Score Deals</button>
+              <button id="refreshRentAllBtn" type="button" class="success">Refresh Rent Analysis</button>
             </div>
           </div>
           <div class="panel-pad grid filter-grid">
@@ -1154,8 +1155,8 @@
       [
         ["AI Analysis", [["Summary", property.aiSummary], ["Status", property.status || "N/A"], ["Source", property.sourceName], ["Score label", property.scoreDetails?.score_label || "N/A"]]],
         ["Distress", [["Tax delinquent", property.tax_delinquent || property.taxDelinquent ? "YES" : "NO"], ["Vacant", property.vacant ? "YES" : "NO"], ["Foreclosure", property.foreclosure ? "YES" : "NO"], ["Absentee owner", property.absentee_owner || property.absenteeOwner ? "YES" : "NO"]]],
-        ["Rent Analyzer", [["Est rent", money(property.rentAnalysis?.estimated_rent || property.estimatedRent)], ["Rent range", property.rentAnalysis?.rent_low ? `${money(property.rentAnalysis.rent_low)} - ${money(property.rentAnalysis.rent_high)}` : "N/A"], ["Section 8", money(property.rentAnalysis?.section8_rent)], ["Confidence", property.rentAnalysis?.confidence_score ? `${property.rentAnalysis.confidence_score}%` : "N/A"]]],
-        ["Financials", [["Value", money(property.estimatedValue)], ["Gross yield", property.rentAnalysis?.gross_yield ? `${property.rentAnalysis.gross_yield}%` : property.estimatedRent && property.estimatedValue ? percent((Number(property.estimatedRent) * 12) / Number(property.estimatedValue)) : "N/A"], ["Cap rate", property.rentAnalysis?.cap_rate ? `${property.rentAnalysis.cap_rate}%` : "N/A"], ["Cash flow", money(property.rentAnalysis?.monthly_cash_flow)], ["Section 8 spread", money(property.rentAnalysis?.section8_spread)]]],
+        ["Rent Analyzer", [["Est rent", money(property.rentAnalysis?.estimated_rent || property.estimatedRent)], ["Rent range", property.rentAnalysis?.rent_low ? `${money(property.rentAnalysis.rent_low)} - ${money(property.rentAnalysis.rent_high)}` : "N/A"], ["Section 8", money(property.rentAnalysis?.section8_rent)], ["Confidence", property.rentAnalysis?.confidence_score ? `${property.rentAnalysis.confidence_score}%` : "N/A"], ["Under-rented", property.rentAnalysis?.under_rented_score || "N/A"]]],
+        ["Financials", [["Value", money(property.estimatedValue)], ["Gross yield", property.rentAnalysis?.gross_yield ? `${property.rentAnalysis.gross_yield}%` : property.estimatedRent && property.estimatedValue ? percent((Number(property.estimatedRent) * 12) / Number(property.estimatedValue)) : "N/A"], ["Cap rate", property.rentAnalysis?.cap_rate ? `${property.rentAnalysis.cap_rate}%` : "N/A"], ["Cash flow", money(property.rentAnalysis?.monthly_cash_flow)], ["Market rent gap", money(property.rentAnalysis?.market_rent_gap)], ["Section 8 spread", money(property.rentAnalysis?.section8_spread)]]],
         ["Property Details", [["Beds", property.bedrooms ?? "N/A"], ["Baths", property.bathrooms ?? "N/A"], ["Sqft", property.sqft ?? "N/A"], ["Year built", property.yearBuilt ?? "N/A"]]],
       ].forEach(([heading, values]) => {
         const panel = document.createElement("div");
@@ -1666,6 +1667,25 @@
       }
     }
 
+    async function refreshAllRentAnalysis() {
+      $("listingsStatus").textContent = "Refreshing rent analyzer for loaded/high-score properties...";
+      try {
+        const response = await fetch("/api/properties/rent-analysis/refresh-all?limit=100", { method: "POST" });
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          throw new Error(error?.detail || `Rent analyzer failed with ${response.status}`);
+        }
+        const data = await response.json();
+        state.dashboardItems = data.data || [];
+        state.expanded = {};
+        switchTab("database");
+        renderDashboard();
+        $("listingsStatus").textContent = `Rent analyzer refreshed for ${state.dashboardItems.length} propert${state.dashboardItems.length === 1 ? "y" : "ies"}.`;
+      } catch (err) {
+        showError($("listingsResults"), `Could not refresh rent analysis: ${err.message}`);
+      }
+    }
+
     function renderConditionResult(result) {
       const values = [
         ["Condition Score", `${result.conditionScore ?? 0}/100`],
@@ -1770,6 +1790,7 @@
     $("searchBothBtn").addEventListener("click", searchDatabaseAndLive);
     $("loadListingsBtn").addEventListener("click", loadListings);
     $("loadDealsBtn").addEventListener("click", loadHighDeals);
+    $("refreshRentAllBtn").addEventListener("click", refreshAllRentAnalysis);
     $("dashboardLoadListingsBtn").addEventListener("click", loadListings);
     $("dashboardLoadDealsBtn").addEventListener("click", loadHighDeals);
     $("dashboardSearch").addEventListener("input", renderDashboard);
