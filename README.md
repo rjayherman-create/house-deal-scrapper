@@ -7,13 +7,16 @@ Set this in Railway so the analyzer has reliable live listing and valuation data
 ```env
 RENTCAST_API_KEY=your_rentcast_key
 RENTCAST_API_BASE_URL=https://api.rentcast.io/v1
+RENTCAST_ENABLED=false
 DATABASE_URL=postgresql://USER:PASSWORD@HOST:5432/DB
 DISTRESSIQ_DB_PATH=/tmp/distressiq.db
 OPENAI_API_KEY=your_openai_key
 OPENAI_VISION_MODEL=gpt-4.1-mini
 ```
 
-The app still keeps Redfin, Realtor, Craigslist, Zillow, and Facebook as best-effort fallback scrapers, but those sources can return zero results from hosted servers because they are HTML pages with changing markup and anti-bot controls.
+The app uses a low-cost data strategy by default: public scrape data, cached property intelligence, internal rent estimates, and Section 8-style estimates. RentCast is intentionally disabled unless `RENTCAST_ENABLED=true` is set for future premium/high-score enrichment.
+
+The app still keeps Redfin, Realtor, Craigslist, Zillow, and Facebook as best-effort public sources, but those sources can return zero results from hosted servers because they are HTML pages with changing markup and anti-bot controls.
 
 `DATABASE_URL` enables the persistent property intelligence system on Railway. The app creates missing `properties`, `property_snapshots`, `watchlists`, and `property_notes` tables without dropping or recreating existing data.
 
@@ -23,6 +26,9 @@ Useful production diagnostics:
 - `/debug/live-data?city=Detroit&state=MI` tests the primary live API and explains missing key/auth/quota/zero-result issues.
 - `/debug/scrapers?city=Detroit&state=MI` tests each source and returns counts.
 - `/analyze?city=Detroit&state=MI&max_price=150000&include_photos=true` runs the full analysis pipeline with optional price filtering and photos.
+- `/api/property/analyze` runs the low-cost property data engine without paid APIs.
+- `/api/rent-comps` returns internal rent/Section 8-style rent comps.
+- `/api/data-priority` shows the data-source priority strategy.
 - `/api/properties/high-deals` returns saved properties ordered by deal score.
 - `/api/deals/alerts` returns saved properties with deal scores at or above 70.
 - `/api/properties/{property_id}/status` updates a saved property's pipeline status.

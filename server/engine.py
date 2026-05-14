@@ -42,6 +42,7 @@ from server.scrapers.rentcast import (
     is_rentcast_enabled,
 )
 from server.location_normalizer import normalize_location
+from server.low_cost_data_engine import estimate_rent, estimate_section8_rent
 
 logger = logging.getLogger(__name__)
 
@@ -179,6 +180,8 @@ def ai_compute_financial_score(listing: Listing) -> float:
         or rent_estimate.get("price")
         or rent_estimate.get("estimatedRent")
         or rent_estimate.get("median")
+        or listing.raw_data.get("low_cost_rent_estimate")
+        or listing.raw_data.get("section8_estimate")
     )
 
     price_score = 0.5
@@ -514,6 +517,13 @@ def enrich_listing(listing: Listing) -> Listing:
     merged_raw["property_record"] = property_record
     merged_raw["value_estimate"] = value_estimate
     merged_raw["rent_estimate"] = rent_estimate
+    merged_raw["low_cost_rent_estimate"] = estimate_rent({
+        "bedrooms": listing.beds,
+        "sqft": listing.sqft,
+        "city": listing.city,
+        "state": listing.state,
+    })
+    merged_raw["section8_estimate"] = estimate_section8_rent(listing.beds, listing.city, listing.state)
 
     subject = value_estimate.get("subjectProperty") if isinstance(value_estimate, dict) else {}
     subject = subject if isinstance(subject, dict) else {}
@@ -601,13 +611,14 @@ def search_listings(
 
     # Pull from all scrapers
     scrapers = [
-        ("RentCast", fetch_rentcast),
         ("Redfin", fetch_redfin),
         ("Zillow", fetch_zillow),
         ("Realtor", fetch_realtor),
         ("Craigslist", fetch_craigslist),
         ("Facebook", fetch_facebook),
     ]
+    if is_rentcast_enabled():
+        scrapers.append(("RentCast", fetch_rentcast))
 
     for source_name, scraper in scrapers:
         try:

@@ -15,6 +15,7 @@ from database import get_all_listings, init_db, upsert_listing
 from server.data_sources import has_primary_listing_source, serialize_data_sources
 from server.engine import ListingAnalysis, search_listings, serialize_analysis
 from server.location_normalizer import normalize_location
+from server.low_cost_data_engine import analyze_low_cost_property, data_priority, rent_comps
 from server.property_system import (
     add_property_note,
     add_to_watchlist,
@@ -162,7 +163,7 @@ async def status():
 @app.get("/data-sources")
 async def data_sources():
     sources = serialize_data_sources()
-    rentcast_status = await run_in_threadpool(check_rentcast)
+    rentcast_status = check_rentcast()
     return {
         "primary_ready": has_primary_listing_source(),
         "ai_analyzer_ready": is_openai_configured(),
@@ -217,7 +218,7 @@ async def debug_live_data(
     state: str = Query("MI", description="State to test"),
 ):
     normalized_city, normalized_state, corrected = normalize_location(city, state)
-    rentcast_status = await run_in_threadpool(check_rentcast, normalized_city, normalized_state)
+    rentcast_status = check_rentcast(normalized_city, normalized_state)
     return {
         "city": normalized_city,
         "state": normalized_state,
@@ -227,6 +228,24 @@ async def debug_live_data(
         "primary_ready": has_primary_listing_source(),
         "rentcast": rentcast_status,
     }
+
+
+@app.post("/api/property/analyze")
+async def api_low_cost_property_analyze(data: dict):
+    return await run_in_threadpool(analyze_low_cost_property, data)
+
+
+@app.post("/api/rent-comps")
+async def api_rent_comps(data: dict):
+    city = str(data.get("city") or "")
+    state = str(data.get("state") or "NY")
+    bedrooms = data.get("bedrooms")
+    return await run_in_threadpool(rent_comps, city, state, bedrooms)
+
+
+@app.get("/api/data-priority")
+async def api_data_priority():
+    return data_priority()
 
 
 @app.post("/api/properties/ingest")

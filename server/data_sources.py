@@ -19,17 +19,32 @@ def _enabled(env_var: Optional[str]) -> bool:
     return bool(env_var and (os.getenv(env_var) or "").strip())
 
 
+def _rentcast_enabled() -> bool:
+    enabled_flag = (os.getenv("RENTCAST_ENABLED") or "false").strip().lower()
+    return enabled_flag in {"1", "true", "yes"} and _enabled("RENTCAST_API_KEY")
+
+
 def get_data_sources() -> List[DataSourceStatus]:
     return [
         DataSourceStatus(
             name="RentCast",
-            category="primary_api",
+            category="premium_api",
+            required_for_analysis=False,
+            enabled=_rentcast_enabled(),
+            env_var="RENTCAST_ENABLED",
+            status="premium_enabled" if _rentcast_enabled() else "premium_disabled",
+            purpose="Optional future premium enrichment for high-score or paid user deep analysis only.",
+            setup_note="Disabled by default to control costs. Set RENTCAST_ENABLED=true only when premium enrichment is intentionally enabled.",
+        ),
+        DataSourceStatus(
+            name="Low-Cost Data Engine",
+            category="primary_engine",
             required_for_analysis=True,
-            enabled=_enabled("RENTCAST_API_KEY"),
-            env_var="RENTCAST_API_KEY",
-            status="ready" if _enabled("RENTCAST_API_KEY") else "missing_api_key",
-            purpose="Primary nationwide sale listings, property records, AVM value, rent estimates, comps, and market data.",
-            setup_note="Create a RentCast API key and set RENTCAST_API_KEY in Railway.",
+            enabled=True,
+            env_var=None,
+            status="ready",
+            purpose="Primary default strategy using cached intelligence, public scrape data, internal rent estimates, and Section 8 estimates.",
+            setup_note="No paid API key required.",
         ),
         DataSourceStatus(
             name="Redfin CSV",

@@ -15,7 +15,8 @@ class RentCastAuthenticationError(RuntimeError):
 
 
 def is_rentcast_enabled() -> bool:
-    return bool((os.getenv("RENTCAST_API_KEY") or "").strip())
+    enabled_flag = (os.getenv("RENTCAST_ENABLED") or "false").strip().lower()
+    return enabled_flag in {"1", "true", "yes"} and bool((os.getenv("RENTCAST_API_KEY") or "").strip())
 
 
 def _request(path: str, params: Dict[str, Any]) -> Any:
@@ -45,6 +46,14 @@ def _payload_rows(payload: Any) -> List[Dict[str, Any]]:
 
 
 def check_rentcast(city: str = "Detroit", state: str = "MI") -> Dict[str, Any]:
+    if not is_rentcast_enabled():
+        return {
+            "enabled": False,
+            "ok": False,
+            "status": "premium_disabled",
+            "message": "RentCast is intentionally disabled. Low-cost engine is active by default.",
+            "base_url": RENTCAST_BASE_URL,
+        }
     api_key = (os.getenv("RENTCAST_API_KEY") or "").strip()
     if not api_key:
         return {
