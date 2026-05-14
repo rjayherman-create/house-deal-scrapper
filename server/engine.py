@@ -39,6 +39,7 @@ from server.scrapers.rentcast import (
     fetch_value_estimate,
     is_rentcast_enabled,
 )
+from server.location_normalizer import normalize_location
 
 
 # ---------------------------------------------------------------------
@@ -520,6 +521,7 @@ def enrich_listing(listing: Listing) -> Listing:
     return listing
 
 def search_listings(city: str, state: str, include_photos: bool = False) -> List[ListingAnalysis]:
+    city, state, _ = normalize_location(city, state)
     listings_raw = []
     seen_listings = set()
 

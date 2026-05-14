@@ -14,6 +14,7 @@ from pathlib import Path
 from database import get_all_listings, init_db, upsert_listing
 from server.data_sources import has_primary_listing_source, serialize_data_sources
 from server.engine import ListingAnalysis, search_listings, serialize_analysis
+from server.location_normalizer import normalize_location
 from server.property_system import (
     add_property_note,
     add_to_watchlist,
@@ -105,12 +106,34 @@ async def analyze(
     state: str = Query(..., description="State to search"),
     include_photos: bool = Query(False, description="Fetch photos from all sources"),
 ):
+    normalized_city, normalized_state, corrected = normalize_location(city, state)
+    if corrected:
+        logger.info(
+            "analyze location corrected from %s, %s to %s, %s",
+            city, state, normalized_city, normalized_state,
+        )
     try:
-        results = await run_in_threadpool(search_listings, city, state, include_photos)
-        logger.info("analyze(%s, %s): %d listings returned", city, state, len(results))
-        return [persist_analysis(result) for result in results]
+        results = await run_in_threadpool(search_listings, normalized_city, normalized_state, include_photos)
+        logger.info(
+            "analyze(%s, %s): %d listings returned",
+            normalized_city, normalized_state, len(results),
+        )
+        serialized_results = [persist_analysis(result) for result in results]
+        if corrected:
+            for item in serialized_results:
+                item.setdefault("search", {})
+                item["search"].update(
+                    {
+                        "requested_city": city,
+                        "requested_state": state,
+                        "city": normalized_city,
+                        "state": normalized_state,
+                        "corrected": True,
+                    }
+                )
+        return serialized_results
     except Exception as exc:
-        logger.exception("analyze(%s, %s) failed: %s", city, state, exc)
+        logger.exception("analyze(%s, %s) failed: %s", normalized_city, normalized_state, exc)
         raise HTTPException(status_code=500, detail="Analysis failed while fetching listings.") from exc
 
 
@@ -235,6 +258,7 @@ async def debug_scrapers(
     city: str = Query("Detroit", description="City to test"),
     state: str = Query("MI", description="State to test"),
 ):
+    normalized_city, normalized_state, corrected = normalize_location(city, state)
     scrapers = [
         ("RentCast", fetch_rentcast),
         ("Redfin", fetch_redfin),
@@ -246,7 +270,7 @@ async def debug_scrapers(
     results = []
     for name, scraper in scrapers:
         try:
-            rows = await run_in_threadpool(scraper, city, state, 5)
+            rows = await run_in_threadpool(scraper, normalized_city, normalized_state, 5)
             results.append({
                 "source": name,
                 "ok": True,
@@ -261,8 +285,11 @@ async def debug_scrapers(
                 "error": str(exc),
             })
     return {
-        "city": city,
-        "state": state,
+        "city": normalized_city,
+        "state": normalized_state,
+        "corrected": corrected,
+        "requested_city": city,
+        "requested_state": state,
         "sources": serialize_data_sources(),
         "scrapers": results,
     }
