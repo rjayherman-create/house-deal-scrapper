@@ -1635,15 +1635,21 @@
     }
 
     async function loadListings() {
-      $("listingsStatus").textContent = "Loading saved listings...";
+      $("listingsStatus").textContent = "Loading property intelligence database...";
       try {
-        const data = await (await fetch("/listings")).json();
-        state.dashboardItems = data.listings || [];
+        const response = await fetch("/api/properties/search?limit=500");
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          throw new Error(error?.detail || `Property database failed with ${response.status}`);
+        }
+        const data = await response.json();
+        state.dashboardItems = data.data || [];
         state.expanded = {};
         switchTab("database");
         renderDashboard();
+        $("listingsStatus").textContent = `Loaded ${state.dashboardItems.length} propert${state.dashboardItems.length === 1 ? "y" : "ies"} from the property intelligence database.`;
       } catch (err) {
-        showError($("listingsResults"), `Could not load listings: ${err.message}`);
+        showError($("listingsResults"), `Could not load property database: ${err.message}`);
       }
     }
 
