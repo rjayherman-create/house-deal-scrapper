@@ -736,8 +736,8 @@
         <div class="panel">
           <div class="panel-header">
             <div>
-              <h2>Analyze Listings</h2>
-              <p>Search public listing sources, optionally include photos, set a maximum price, and save the search for reuse.</p>
+              <h2>Deal Search</h2>
+              <p>Search saved property intelligence and live sources with price filters, exact links, and photo previews.</p>
             </div>
             <button id="saveSearchBtn" type="button" class="secondary">Save Search</button>
           </div>
@@ -746,7 +746,7 @@
             <label>State<input id="state" type="text" maxlength="2" placeholder="IL" autocomplete="address-level1" /></label>
             <label>Maximum Price<input id="maxPrice" type="number" min="0" step="1000" placeholder="150000" /></label>
             <label>Photos<select id="photos"><option value="true">Include photos</option><option value="false">No photos</option></select></label>
-            <button id="analyzeBtn" type="button">Run Live Analysis</button>
+            <button id="analyzeBtn" type="button">Run Deal Search</button>
           </div>
           <div class="panel-pad grid search-grid" style="padding-top:0">
             <label>Database Search<input id="researchQuery" type="text" placeholder="Address, county, zip, parcel" /></label>
@@ -763,8 +763,8 @@
         <div class="result-list">
           <div class="panel-header">
             <div>
-              <h2>Scraped Property Results</h2>
-              <p>Results can come from saved database records, live scraping, or both.</p>
+              <h2>Deal Search Results</h2>
+              <p>Results can come from saved database records, live provider data, public scrapes, or exact-address web links.</p>
             </div>
           </div>
           <div id="analyzeResults" class="empty-state">Run a search to see scraped properties.</div>
@@ -884,7 +884,7 @@
 
     const tabTitles = {
       dashboard: ["Dashboard", "Scraped property intelligence and operating metrics."],
-      research: ["Research", "Run live listing analysis with price filters and photos."],
+      research: ["Research", "Run deal search with price filters, database results, live sources, and photo previews."],
       database: ["Property Database", "Search, expand, export, and manage scraped properties."],
       ai: ["AI Analyzer", "Photo-based rehab, condition, rent, and ARV analysis."],
       maps: ["Heat Maps", "Map-ready property intelligence and future overlay layers."],
@@ -972,6 +972,14 @@
       };
     }
 
+    function livePreviewImage(property) {
+      if (property.photos?.length) return "";
+      const links = propertyLinks(property);
+      const target = links.Source || links.Zillow || links.Realtor || links.Redfin || links.Maps;
+      if (!target) return "";
+      return `https://image.thum.io/get/width/420/crop/260/noanimate/${encodeURIComponent(target)}`;
+    }
+
     function showError(container, message) {
       container.innerHTML = `<div class="empty-state error">${escapeHtml(message)}</div>`;
     }
@@ -1050,9 +1058,24 @@
         img.loading = "lazy";
         return img;
       }
+      const previewUrl = livePreviewImage(property);
+      if (previewUrl) {
+        const img = document.createElement("img");
+        img.className = "thumb";
+        img.src = previewUrl;
+        img.alt = `${property.address} live web preview`;
+        img.loading = "lazy";
+        img.onerror = () => {
+          const fallback = document.createElement("div");
+          fallback.className = "thumb no-photo";
+          fallback.textContent = "Open links";
+          img.replaceWith(fallback);
+        };
+        return img;
+      }
       const fallback = document.createElement("div");
       fallback.className = "thumb no-photo";
-      fallback.textContent = "No photo";
+      fallback.textContent = "Open links";
       return fallback;
     }
 
@@ -1094,7 +1117,7 @@
         <div class="property-subtitle">${escapeHtml(location || property.county || "Location unavailable")}</div>
         <div class="badges">
           ${scoreBadge(property)}
-          ${property.photos?.length ? `<span class="badge">${property.photos.length} photo${property.photos.length === 1 ? "" : "s"}</span>` : `<span class="badge red">No photos</span>`}
+          ${property.photos?.length ? `<span class="badge">${property.photos.length} photo${property.photos.length === 1 ? "" : "s"}</span>` : `<span class="badge yellow">Live preview</span>`}
           ${property.sourceUrl ? `<span class="badge">Direct source</span>` : `<span class="badge yellow">Search links</span>`}
         </div>
       `;
@@ -1261,6 +1284,23 @@
         });
         photoPanel.appendChild(photoGrid);
         details.appendChild(photoPanel);
+      } else if (!property.photos?.length) {
+        const previewUrl = livePreviewImage(property);
+        if (previewUrl) {
+          const previewPanel = document.createElement("div");
+          previewPanel.className = "mini-panel";
+          previewPanel.innerHTML = `<h3>Live Web Preview</h3>`;
+          const img = document.createElement("img");
+          img.className = "thumb";
+          img.style.width = "100%";
+          img.style.height = "180px";
+          img.style.objectFit = "cover";
+          img.loading = "lazy";
+          img.src = previewUrl;
+          img.alt = `${property.address} live web preview`;
+          previewPanel.appendChild(img);
+          details.appendChild(previewPanel);
+        }
       }
 
       if (property.propertyDbId && Number.isFinite(Number(property.propertyDbId))) {
@@ -1583,7 +1623,7 @@
     }
 
     async function runAnalyze() {
-      return runResearch("live");
+      return runResearch("both");
     }
 
     async function searchResearchDatabase() {

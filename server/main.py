@@ -255,6 +255,14 @@ async def api_research(
                 logger.exception("research live analysis failed: %s", exc)
                 errors.append({"source": "live", "message": "Live research failed while fetching listings."})
 
+    if mode == "both" and database_rows and not live_rows and not any(error.get("source") == "live" for error in errors):
+        errors.append(
+            {
+                "source": "live",
+                "message": "Public live scrapers returned zero provider listings, so Deal Search is showing matching database records with exact-address Zillow, Realtor, Redfin, and Maps links.",
+            }
+        )
+
     combined = []
     seen = set()
     for item in [*database_rows, *live_rows]:

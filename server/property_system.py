@@ -281,7 +281,18 @@ def _jsonable(value: Any) -> Any:
 
 
 def _row_to_dict(row: RowMapping[str, Any]) -> dict[str, Any]:
-    return {key: _jsonable(value) for key, value in row.items()}
+    data = {key: _jsonable(value) for key, value in row.items()}
+    if not isinstance(data.get("photos"), list):
+        data["photos"] = []
+    if not isinstance(data.get("links"), Mapping):
+        data["links"] = build_property_links(
+            data.get("address"),
+            data.get("city"),
+            data.get("state"),
+            data.get("source_url"),
+            data.get("zip"),
+        )
+    return data
 
 
 def build_property_links(
