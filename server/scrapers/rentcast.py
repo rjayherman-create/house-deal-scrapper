@@ -32,6 +32,69 @@ def _request(path: str, params: Dict[str, Any]) -> Any:
     return response.json()
 
 
+def check_rentcast(city: str = "Detroit", state: str = "MI") -> Dict[str, Any]:
+    api_key = os.getenv("RENTCAST_API_KEY")
+    if not api_key:
+        return {
+            "enabled": False,
+            "ok": False,
+            "status": "missing_api_key",
+            "message": "RENTCAST_API_KEY is not set in Railway.",
+            "base_url": RENTCAST_BASE_URL,
+        }
+
+    try:
+        payload = _request(
+            "/listings/sale",
+            {
+                "city": city,
+                "state": state.upper(),
+                "status": "Active",
+                "limit": 3,
+            },
+        )
+        rows = payload if isinstance(payload, list) else payload.get("data", []) if isinstance(payload, dict) else []
+        return {
+            "enabled": True,
+            "ok": True,
+            "status": "ready" if rows else "connected_zero_results",
+            "message": (
+                f"RentCast returned {len(rows)} active sale listing(s) for {city}, {state.upper()}."
+                if rows
+                else f"RentCast connected, but returned zero active sale listings for {city}, {state.upper()}."
+            ),
+            "base_url": RENTCAST_BASE_URL,
+            "sample_count": len(rows),
+        }
+    except RuntimeError as exc:
+        return {
+            "enabled": True,
+            "ok": False,
+            "status": "auth_failed",
+            "message": str(exc),
+            "base_url": RENTCAST_BASE_URL,
+        }
+    except requests.HTTPError as exc:
+        status_code = exc.response.status_code if exc.response is not None else None
+        response_text = exc.response.text[:500] if exc.response is not None else ""
+        return {
+            "enabled": True,
+            "ok": False,
+            "status": "http_error",
+            "status_code": status_code,
+            "message": response_text or str(exc),
+            "base_url": RENTCAST_BASE_URL,
+        }
+    except requests.RequestException as exc:
+        return {
+            "enabled": True,
+            "ok": False,
+            "status": "network_error",
+            "message": str(exc),
+            "base_url": RENTCAST_BASE_URL,
+        }
+
+
 def _number(value: Any) -> Optional[float]:
     if value in (None, ""):
         return None

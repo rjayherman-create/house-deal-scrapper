@@ -30,7 +30,7 @@ from server.scrapers.craigslist import fetch_craigslist
 from server.scrapers.facebook import fetch_facebook
 from server.scrapers.realtor import fetch_realtor
 from server.scrapers.redfin import fetch_redfin
-from server.scrapers.rentcast import fetch_rentcast
+from server.scrapers.rentcast import check_rentcast, fetch_rentcast
 from server.scrapers.zillow import fetch_zillow
 
 logging.basicConfig(
@@ -151,14 +151,36 @@ async def status():
 @app.get("/data-sources")
 async def data_sources():
     sources = serialize_data_sources()
+    rentcast_status = await run_in_threadpool(check_rentcast)
     return {
         "primary_ready": has_primary_listing_source(),
+        "live_check": {
+            "rentcast": rentcast_status,
+        },
         "sources": sources,
         "required_setup": [
             source
             for source in sources
             if source["required_for_analysis"] and not source["enabled"]
         ],
+    }
+
+
+@app.get("/debug/live-data")
+async def debug_live_data(
+    city: str = Query("Detroit", description="City to test"),
+    state: str = Query("MI", description="State to test"),
+):
+    normalized_city, normalized_state, corrected = normalize_location(city, state)
+    rentcast_status = await run_in_threadpool(check_rentcast, normalized_city, normalized_state)
+    return {
+        "city": normalized_city,
+        "state": normalized_state,
+        "corrected": corrected,
+        "requested_city": city,
+        "requested_state": state,
+        "primary_ready": has_primary_listing_source(),
+        "rentcast": rentcast_status,
     }
 
 

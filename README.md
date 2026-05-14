@@ -18,6 +18,7 @@ The app still keeps Redfin, Realtor, Craigslist, Zillow, and Facebook as best-ef
 Useful production diagnostics:
 
 - `/data-sources` shows configured and missing data sources.
+- `/debug/live-data?city=Detroit&state=MI` tests the primary live API and explains missing key/auth/quota/zero-result issues.
 - `/debug/scrapers?city=Detroit&state=MI` tests each source and returns counts.
 - `/analyze?city=Detroit&state=MI` runs the full analysis pipeline.
 - `/api/properties/high-deals` returns saved properties ordered by deal score.

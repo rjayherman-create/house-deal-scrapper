@@ -205,8 +205,13 @@
       sourcesResults.textContent = "";
       const missing = data.required_setup || [];
       sourcesStatus.textContent = data.primary_ready
-        ? "Primary API source is configured."
+        ? "Primary API source is configured. Running live connectivity check..."
         : "Primary API source is missing. Add RENTCAST_API_KEY in Railway for live analysis.";
+
+      if (data.live_check && data.live_check.rentcast) {
+        const check = data.live_check.rentcast;
+        sourcesStatus.textContent = check.message || sourcesStatus.textContent;
+      }
 
       if (missing.length) {
         const warning = document.createElement("p");
