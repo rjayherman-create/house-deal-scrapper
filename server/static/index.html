@@ -786,7 +786,7 @@
           <div class="panel-pad grid filter-grid">
             <label>Search<input id="dashboardSearch" type="text" placeholder="Address, city, county" /></label>
             <label>Min Score<select id="dashboardScore"><option value="0">All Scores</option><option value="50">50+</option><option value="70">70+</option><option value="85">85+</option></select></label>
-            <label>Sort<select id="dashboardSort"><option value="score">Deal score</option><option value="newest">Newest</option><option value="price">Price/value</option></select></label>
+            <label>Sort<select id="dashboardSort"><option value="score">Deal score</option><option value="cashflow">Highest cash flow</option><option value="caprate">Highest cap rate</option><option value="yield">Highest gross yield</option><option value="confidence">Strongest rent confidence</option><option value="newest">Newest</option><option value="price">Price/value</option></select></label>
             <button id="expandAllBtn" type="button" class="secondary">Expand All</button>
             <button id="collapseAllBtn" type="button" class="ghost">Collapse All</button>
           </div>
@@ -936,6 +936,8 @@
           ?? (raw?.deal_scores?.final_score ? Math.round(raw.deal_scores.final_score * 100) : 0)
         ),
         scoreDetails: raw?.deal_scores || p.scoreDetails || p.score_details || {},
+        rentAnalysis: p.rentAnalysis || p.rent_analysis || raw?.rentAnalysis || {},
+        rentalComps: p.rentalComps || p.rental_comps || raw?.rentalComps || [],
         estimatedRent: p.estimatedRent ?? p.estimated_rent ?? p.rentEstimate ?? p.rent_estimate,
         estimatedValue: p.estimatedValue ?? p.estimated_value ?? p.valueEstimate ?? p.price ?? p.asking_price ?? p.askingPrice,
         taxAmountDue: p.taxAmountDue ?? p.tax_amount_due,
@@ -1030,6 +1032,10 @@
       rows.sort((a, b) => {
         if (sort === "newest") return String(b.created_at || b.createdAt || "").localeCompare(String(a.created_at || a.createdAt || ""));
         if (sort === "price") return Number(a.estimatedValue || 0) - Number(b.estimatedValue || 0);
+        if (sort === "cashflow") return Number(b.rentAnalysis?.monthly_cash_flow || 0) - Number(a.rentAnalysis?.monthly_cash_flow || 0);
+        if (sort === "caprate") return Number(b.rentAnalysis?.cap_rate || 0) - Number(a.rentAnalysis?.cap_rate || 0);
+        if (sort === "yield") return Number(b.rentAnalysis?.gross_yield || 0) - Number(a.rentAnalysis?.gross_yield || 0);
+        if (sort === "confidence") return Number(b.rentAnalysis?.confidence_score || 0) - Number(a.rentAnalysis?.confidence_score || 0);
         return b.dealScore - a.dealScore;
       });
       return rows;
@@ -1125,7 +1131,8 @@
       [
         ["AI Analysis", [["Summary", property.aiSummary], ["Status", property.status || "N/A"], ["Source", property.sourceName], ["Score label", property.scoreDetails?.score_label || "N/A"]]],
         ["Distress", [["Tax delinquent", property.tax_delinquent || property.taxDelinquent ? "YES" : "NO"], ["Vacant", property.vacant ? "YES" : "NO"], ["Foreclosure", property.foreclosure ? "YES" : "NO"], ["Absentee owner", property.absentee_owner || property.absenteeOwner ? "YES" : "NO"]]],
-        ["Financials", [["Rent", money(property.estimatedRent)], ["Value", money(property.estimatedValue)], ["Tax due", money(property.taxAmountDue)], ["Rent ratio", property.estimatedRent && property.estimatedValue ? percent((Number(property.estimatedRent) * 12) / Number(property.estimatedValue)) : "N/A"], ["Score rent yield", property.scoreDetails?.rent_yield ? percent(property.scoreDetails.rent_yield) : "N/A"]]],
+        ["Rent Analyzer", [["Est rent", money(property.rentAnalysis?.estimated_rent || property.estimatedRent)], ["Rent range", property.rentAnalysis?.rent_low ? `${money(property.rentAnalysis.rent_low)} - ${money(property.rentAnalysis.rent_high)}` : "N/A"], ["Section 8", money(property.rentAnalysis?.section8_rent)], ["Confidence", property.rentAnalysis?.confidence_score ? `${property.rentAnalysis.confidence_score}%` : "N/A"]]],
+        ["Financials", [["Value", money(property.estimatedValue)], ["Gross yield", property.rentAnalysis?.gross_yield ? `${property.rentAnalysis.gross_yield}%` : property.estimatedRent && property.estimatedValue ? percent((Number(property.estimatedRent) * 12) / Number(property.estimatedValue)) : "N/A"], ["Cap rate", property.rentAnalysis?.cap_rate ? `${property.rentAnalysis.cap_rate}%` : "N/A"], ["Cash flow", money(property.rentAnalysis?.monthly_cash_flow)], ["Section 8 spread", money(property.rentAnalysis?.section8_spread)]]],
         ["Property Details", [["Beds", property.bedrooms ?? "N/A"], ["Baths", property.bathrooms ?? "N/A"], ["Sqft", property.sqft ?? "N/A"], ["Year built", property.yearBuilt ?? "N/A"]]],
       ].forEach(([heading, values]) => {
         const panel = document.createElement("div");
@@ -1153,6 +1160,23 @@
           </div>
         `;
         details.appendChild(scorePanel);
+      }
+
+      if (property.rentalComps?.length) {
+        const compsPanel = document.createElement("div");
+        compsPanel.className = "mini-panel";
+        compsPanel.innerHTML = `
+          <h3>Rental Comps</h3>
+          <div class="kv">
+            ${property.rentalComps.slice(0, 8).map((comp) => `
+              <div>
+                <span>${escapeHtml(comp.comp_address || comp.address || "Rental comp")} - ${escapeHtml(comp.beds ?? "N/A")} bd - ${escapeHtml(comp.distance_miles ?? "N/A")} mi</span>
+                <strong>${escapeHtml(money(comp.rent))}</strong>
+              </div>
+            `).join("")}
+          </div>
+        `;
+        details.appendChild(compsPanel);
       }
 
       const actions = document.createElement("div");
@@ -1195,6 +1219,16 @@
         await addToWatchlist(property);
       });
       actions.appendChild(watch);
+
+      const rent = document.createElement("button");
+      rent.type = "button";
+      rent.className = "success";
+      rent.textContent = property.rentAnalysis?.estimated_rent ? "Refresh Rent Analysis" : "Analyze Rent";
+      rent.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        await refreshRentAnalysis(property);
+      });
+      actions.appendChild(rent);
 
       const refreshPhotos = document.createElement("button");
       refreshPhotos.type = "button";
@@ -1377,6 +1411,46 @@
       });
       $("listingsStatus").textContent = `Refreshed ${data.photos.length} photo${data.photos.length === 1 ? "" : "s"}.`;
       renderDashboard();
+    }
+
+    function updatePropertyInState(propertyId, updates) {
+      state.dashboardItems = state.dashboardItems.map((item) => {
+        const normalized = normalizeProperty(item);
+        if (propertyDatabaseId(normalized) === propertyId) {
+          return { ...item, ...updates, property: { ...(item.property || {}), ...updates } };
+        }
+        return item;
+      });
+    }
+
+    async function refreshRentAnalysis(property) {
+      const propertyId = propertyDatabaseId(property);
+      if (!propertyId) {
+        $("listingsStatus").textContent = "This listing must be saved before rent analysis can run.";
+        $("analyzeStatus").textContent = "This listing must be saved before rent analysis can run.";
+        return;
+      }
+      const statusTarget = state.activeTab === "research" ? $("analyzeStatus") : $("listingsStatus");
+      statusTarget.textContent = "Running rent analyzer and comp rent engine...";
+      const response = await fetch(`/api/properties/${propertyId}/rent-analysis/refresh`, { method: "POST" });
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        statusTarget.textContent = error?.detail || "Rent analysis failed.";
+        return;
+      }
+      const data = await response.json();
+      updatePropertyInState(propertyId, {
+        rentAnalysis: data.analysis,
+        rentalComps: data.comps || [],
+        estimatedRent: data.analysis?.estimated_rent,
+        estimated_rent: data.analysis?.estimated_rent,
+      });
+      statusTarget.textContent = `Rent analysis complete: ${money(data.analysis?.estimated_rent)} estimated rent, ${data.analysis?.confidence_score || 0}% confidence.`;
+      if (state.activeTab === "research") {
+        renderPropertyList($("analyzeResults"), state.dashboardItems, "No properties loaded.");
+      } else {
+        renderDashboard();
+      }
     }
 
     function loadSavedSearches() {

@@ -34,6 +34,7 @@ from server.property_condition_analyzer import (
     analyze_property_images,
     is_openai_configured,
 )
+from server.rent_analyzer import generate_rent_analysis, get_rent_analysis
 from server.scrapers.craigslist import fetch_craigslist
 from server.scrapers.facebook import fetch_facebook
 from server.scrapers.realtor import fetch_realtor
@@ -90,6 +91,10 @@ def persist_analysis(analysis: ListingAnalysis) -> dict:
     serialized["listing"]["zip_code"] = raw_listing.get("zip_code", "")
     try:
         property_record = ingest_property_from_analysis(analysis, saved_listing_id)
+        try:
+            generate_rent_analysis(property_record["id"])
+        except Exception as rent_exc:
+            logger.warning("rent analysis generation failed for property %s: %s", property_record.get("id"), rent_exc)
         serialized["listing"]["property_intelligence_id"] = property_record.get("id")
         serialized["listing"]["property_deal_score"] = property_record.get("deal_score")
     except Exception as exc:
@@ -274,6 +279,10 @@ async def api_data_priority():
 async def api_ingest_property(data: dict):
     try:
         property_record = await run_in_threadpool(ingest_property, data)
+        try:
+            await run_in_threadpool(generate_rent_analysis, property_record["id"])
+        except Exception as rent_exc:
+            logger.warning("rent analysis generation failed for property %s: %s", property_record.get("id"), rent_exc)
         return {
             "success": True,
             "property": property_record,
@@ -340,6 +349,36 @@ async def api_property_detail(property_id: int):
         raise
     except Exception as exc:
         logger.exception("property detail lookup failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/properties/{property_id}/rent-analysis")
+async def api_get_rent_analysis(property_id: int):
+    try:
+        result = await run_in_threadpool(get_rent_analysis, property_id)
+        return {
+            "success": True,
+            **result,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("rent analysis lookup failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/properties/{property_id}/rent-analysis/refresh")
+async def api_refresh_rent_analysis(property_id: int):
+    try:
+        result = await run_in_threadpool(generate_rent_analysis, property_id)
+        return {
+            "success": True,
+            **result,
+        }
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("rent analysis refresh failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
