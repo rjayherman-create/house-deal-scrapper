@@ -822,6 +822,13 @@
           <div class="panel-pad">
             <div id="discoveryStatus" class="status">Run the AI market scan to generate discoveries.</div>
           </div>
+          <div class="panel-pad grid filter-grid" style="padding-top:0">
+            <label><span><input id="findHiddenMarkets" type="checkbox" checked /> Find hidden markets</span></label>
+            <label><span><input id="findSection8" type="checkbox" checked /> Section 8 arbitrage</span></label>
+            <label><span><input id="findCashflow" type="checkbox" checked /> Low competition cash flow</span></label>
+            <label><span><input id="findForeclosures" type="checkbox" checked /> Foreclosure spikes</span></label>
+            <label><span><input id="findUndervalued" type="checkbox" checked /> Undervalued ZIPs</span></label>
+          </div>
         </div>
 
         <div class="grid stats-grid">
@@ -849,6 +856,26 @@
             </div>
           </div>
           <div id="discoveryAlerts" class="source-grid"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>Initial Target Markets</h2>
+              <p>Starter markets selected for low acquisition, Section 8 demand, cash flow, and lower investor saturation.</p>
+            </div>
+          </div>
+          <div id="targetMarkets" class="source-grid"></div>
+        </div>
+
+        <div class="panel">
+          <div class="panel-header">
+            <div>
+              <h2>AI Recommendations</h2>
+              <p>Top-ranked property opportunities based on AI deal scores and user-style filters.</p>
+            </div>
+          </div>
+          <div id="aiRecommendations" class="source-grid"></div>
         </div>
       </section>
 
@@ -1849,6 +1876,8 @@
     function renderDiscovery(data) {
       const markets = data.markets || data.data || [];
       const alerts = data.alerts || [];
+      const targets = data.targets || [];
+      const recommendations = data.recommendations || [];
       $("discoveryMarketCount").textContent = String(markets.length);
       $("discoveryAlertCount").textContent = String(alerts.length);
       $("discoveryTopScore").textContent = String(Math.round(Number(markets[0]?.opportunity_score || markets[0]?.score || 0)));
@@ -1871,18 +1900,50 @@
           </div>
         `;
       }).join("") || `<div class="empty-state">No discovery alerts yet.</div>`;
+      $("targetMarkets").innerHTML = targets.slice(0, 12).map((market) => `
+        <div class="source-card">
+          <strong>${escapeHtml([market.city, market.state].filter(Boolean).join(", "))}</strong>
+          <span>Coverage: ${escapeHtml(market.coverage || "target")}</span>
+          <span>${escapeHtml(market.reason || "Target market for cash-flow discovery.")}</span>
+        </div>
+      `).join("") || `<div class="empty-state">Load target markets to review the starter list.</div>`;
+      $("aiRecommendations").innerHTML = recommendations.slice(0, 12).map((property) => {
+        const reasons = property.aiReasoning?.reasons || [];
+        return `
+          <div class="source-card">
+            <strong>${escapeHtml(property.address || "Property")}</strong>
+            <span>${escapeHtml([property.city, property.state, property.zip].filter(Boolean).join(", "))} | AI score ${escapeHtml(property.aiScore ?? property.deal_score ?? "N/A")}</span>
+            <span>Value ${escapeHtml(money(property.estimated_value))} | Rent ${escapeHtml(money(property.estimated_rent))}</span>
+            <span>${escapeHtml(reasons.slice(0, 2).join(" | ") || "Ranked by cash flow, rent, market, and risk signals.")}</span>
+          </div>
+        `;
+      }).join("") || `<div class="empty-state">Run discovery to load AI-ranked properties.</div>`;
     }
 
     async function runDiscoveryScan() {
       $("discoveryStatus").textContent = "Running AI market discovery scan...";
       try {
-        const response = await fetch("/api/discovery/run", { method: "POST" });
+        const filters = {
+          hidden: $("findHiddenMarkets").checked,
+          section8: $("findSection8").checked,
+          cashflow: $("findCashflow").checked,
+          foreclosure: $("findForeclosures").checked,
+          undervalued: $("findUndervalued").checked,
+          appreciation: true,
+        };
+        const response = await fetch("/api/discovery/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(filters),
+        });
         if (!response.ok) {
           const error = await response.json().catch(() => null);
           throw new Error(error?.detail || `Discovery failed with ${response.status}`);
         }
         const data = await response.json();
-        renderDiscovery(data);
+        const targets = await (await fetch("/api/discovery/target-markets")).json();
+        const recommendations = await (await fetch("/api/discovery/recommendations?limit=12")).json();
+        renderDiscovery({ ...data, targets: targets.data || [], recommendations: recommendations.data || [] });
         $("discoveryStatus").textContent = `Discovery complete: ${data.markets?.length || 0} markets scored, ${data.alerts?.length || 0} alerts generated.`;
       } catch (err) {
         showError($("marketResults"), `Could not run discovery: ${err.message}`);
@@ -1895,10 +1956,14 @@
       try {
         const marketsResponse = await fetch("/api/markets/stats?limit=50");
         const alertsResponse = await fetch("/api/discovery/alerts?limit=50");
-        if (!marketsResponse.ok || !alertsResponse.ok) throw new Error("Discovery API unavailable.");
+        const targetsResponse = await fetch("/api/discovery/target-markets");
+        const recommendationsResponse = await fetch("/api/discovery/recommendations?limit=12");
+        if (!marketsResponse.ok || !alertsResponse.ok || !targetsResponse.ok || !recommendationsResponse.ok) throw new Error("Discovery API unavailable.");
         const markets = await marketsResponse.json();
         const alerts = await alertsResponse.json();
-        renderDiscovery({ markets: markets.data || [], alerts: alerts.data || [] });
+        const targets = await targetsResponse.json();
+        const recommendations = await recommendationsResponse.json();
+        renderDiscovery({ markets: markets.data || [], alerts: alerts.data || [], targets: targets.data || [], recommendations: recommendations.data || [] });
         $("discoveryStatus").textContent = `Loaded ${markets.count || 0} markets and ${alerts.count || 0} alerts.`;
       } catch (err) {
         showError($("marketResults"), `Could not load discovery data: ${err.message}`);

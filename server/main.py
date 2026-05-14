@@ -5,7 +5,7 @@ FastAPI backend for House Deal Scraper.
 import logging
 from typing import Optional
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
@@ -16,7 +16,14 @@ from server.data_sources import has_primary_listing_source, serialize_data_sourc
 from server.engine import ListingAnalysis, fetch_detail_page_photos, search_listings, serialize_analysis
 from server.location_normalizer import normalize_location
 from server.low_cost_data_engine import analyze_low_cost_property, data_priority, rent_comps
-from server.market_discovery import get_discovery_alerts, get_market_stats, run_market_discovery
+from server.market_discovery import (
+    get_ai_recommendations,
+    get_discovery_alerts,
+    get_market_heatmap_geojson,
+    get_market_stats,
+    get_target_markets,
+    run_market_discovery,
+)
 from server.property_system import (
     add_property_note,
     add_to_watchlist,
@@ -462,9 +469,9 @@ async def api_market_stats(limit: int = Query(50, ge=1, le=250)):
 
 
 @app.post("/api/discovery/run")
-async def api_run_discovery():
+async def api_run_discovery(filters: dict = Body(default_factory=dict)):
     try:
-        return await run_in_threadpool(run_market_discovery)
+        return await run_in_threadpool(run_market_discovery, filters)
     except Exception as exc:
         logger.exception("market discovery failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
@@ -484,6 +491,48 @@ async def api_discovery_alerts(limit: int = Query(50, ge=1, le=250)):
         }
     except Exception as exc:
         logger.exception("discovery alert lookup failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/discovery/target-markets")
+async def api_target_markets():
+    try:
+        rows = await run_in_threadpool(get_target_markets)
+        return {
+            "success": True,
+            "count": len(rows),
+            "data": rows,
+        }
+    except Exception as exc:
+        logger.exception("target market lookup failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/discovery/heatmap.geojson")
+async def api_market_heatmap_geojson(limit: int = Query(100, ge=1, le=500)):
+    try:
+        return await run_in_threadpool(get_market_heatmap_geojson, limit)
+    except Exception as exc:
+        logger.exception("market heatmap lookup failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.get("/api/discovery/recommendations")
+async def api_ai_recommendations(
+    max_price: Optional[float] = Query(None, ge=0),
+    states: Optional[str] = Query(None, description="Comma-separated preferred states"),
+    limit: int = Query(50, ge=1, le=250),
+):
+    try:
+        preferred_states = [state.strip().upper() for state in states.split(",")] if states else None
+        rows = await run_in_threadpool(get_ai_recommendations, max_price, preferred_states, limit)
+        return {
+            "success": True,
+            "count": len(rows),
+            "data": rows,
+        }
+    except Exception as exc:
+        logger.exception("AI recommendation lookup failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 

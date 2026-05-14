@@ -11,7 +11,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Mapping, Optional
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, Numeric, String, Table, Text, delete, desc, func, insert, select
+from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, Numeric, String, Table, Text, delete, desc, insert, select
 
 from server.low_cost_data_engine import estimate_section8_rent
 from server.property_system import _jsonable, _row_to_dict, get_property_engine, metadata, properties
@@ -88,6 +88,23 @@ user_preferences = Table(
     Column("rehab_tolerance", Numeric),
     Column("created_at", DateTime, default=datetime.utcnow),
 )
+
+
+TARGET_MARKETS = [
+    {"city": "Buffalo", "state": "NY", "zip_code": "", "latitude": 42.8864, "longitude": -78.8784},
+    {"city": "Rochester", "state": "NY", "zip_code": "", "latitude": 43.1566, "longitude": -77.6088},
+    {"city": "Syracuse", "state": "NY", "zip_code": "", "latitude": 43.0481, "longitude": -76.1474},
+    {"city": "Cleveland", "state": "OH", "zip_code": "", "latitude": 41.4993, "longitude": -81.6944},
+    {"city": "Toledo", "state": "OH", "zip_code": "", "latitude": 41.6528, "longitude": -83.5379},
+    {"city": "Detroit", "state": "MI", "zip_code": "", "latitude": 42.3314, "longitude": -83.0458},
+    {"city": "Peoria", "state": "IL", "zip_code": "", "latitude": 40.6936, "longitude": -89.5890},
+    {"city": "Youngstown", "state": "OH", "zip_code": "", "latitude": 41.0998, "longitude": -80.6495},
+]
+
+MARKET_COORDS = {
+    (item["city"], item["state"]): (item["latitude"], item["longitude"])
+    for item in TARGET_MARKETS
+}
 
 
 def _num(value: Any) -> Optional[float]:
@@ -253,7 +270,28 @@ def calculate_all_property_scores() -> list[dict[str, Any]]:
     return [_jsonable(score) for score in sorted(scores, key=lambda item: item["total_score"], reverse=True)]
 
 
-def run_market_discovery() -> dict[str, Any]:
+def _enabled_filter(filters: Optional[Mapping[str, Any]], key: str) -> bool:
+    if not filters:
+        return True
+    return bool(filters.get(key, True))
+
+
+def _alert_type_for_reason(reason: str) -> str:
+    lower = reason.lower()
+    if "section 8" in lower:
+        return "section8_arbitrage"
+    if "foreclosure" in lower:
+        return "rising_foreclosure_inventory"
+    if "cash flow" in lower:
+        return "high_cash_flow_area"
+    if "undervalued" in lower:
+        return "undervalued_zip"
+    if "appreciation" in lower:
+        return "emerging_appreciation_market"
+    return "ai_hidden_market"
+
+
+def run_market_discovery(filters: Optional[Mapping[str, Any]] = None) -> dict[str, Any]:
     stats = update_market_stats()
     scores = calculate_all_property_scores()
     alerts = []
@@ -263,22 +301,27 @@ def run_market_discovery() -> dict[str, Any]:
         avg_rent = _num(market.get("avg_rent")) or 0
         section8 = _num(market.get("avg_section8_rent")) or 0
         rent_to_price = (avg_rent * 12 / avg_price) if avg_price else 0
-        if rent_to_price > 0.018 and (_num(market.get("investor_activity_score")) or 10) < 5 and (_num(market.get("vacancy_rate")) or 10) < 8:
+        if _enabled_filter(filters, "cashflow") and rent_to_price > 0.018 and (_num(market.get("investor_activity_score")) or 10) < 5 and (_num(market.get("vacancy_rate")) or 10) < 8:
             reasons.append("Strong cash flow with low competition")
-        if avg_rent and section8 > avg_rent * 1.15:
+        if _enabled_filter(filters, "section8") and avg_rent and section8 > avg_rent * 1.15:
             reasons.append("Section 8 arbitrage opportunity")
-        if (_num(market.get("foreclosure_rate")) or 0) > 7 and (_num(market.get("investor_activity_score")) or 10) < 4:
+        if _enabled_filter(filters, "foreclosure") and (_num(market.get("foreclosure_rate")) or 0) > 7 and (_num(market.get("investor_activity_score")) or 10) < 4:
             reasons.append("Foreclosure inventory increasing")
-        if not reasons and (_num(market.get("opportunity_score")) or 0) >= 60:
+        if _enabled_filter(filters, "undervalued") and avg_price and avg_price < 85000 and rent_to_price > 0.014:
+            reasons.append("Undervalued ZIP code with useful rent support")
+        if _enabled_filter(filters, "appreciation") and (_num(market.get("appreciation_score")) or 0) >= 6 and (_num(market.get("opportunity_score")) or 0) >= 55:
+            reasons.append("Emerging appreciation market with cash-flow support")
+        if _enabled_filter(filters, "hidden") and not reasons and (_num(market.get("opportunity_score")) or 0) >= 60:
             reasons.append("AI hidden market score crossed opportunity threshold")
         for reason in reasons:
+            alert_type = _alert_type_for_reason(reason)
             alerts.append(
                 {
                     "title": "AI Market Discovery",
                     "description": reason,
                     "city": market.get("city"),
                     "state": market.get("state"),
-                    "alert_type": "ai_hidden_market" if "hidden" in reason.lower() else "market_opportunity",
+                    "alert_type": alert_type,
                     "score": market.get("opportunity_score"),
                     "payload": {"market": market, "reasons": reasons},
                     "created_at": datetime.utcnow(),
@@ -308,3 +351,69 @@ def get_discovery_alerts(limit: int = 50) -> list[dict[str, Any]]:
     with get_property_engine().begin() as conn:
         rows = conn.execute(select(discovery_alerts).order_by(desc(discovery_alerts.c.score), desc(discovery_alerts.c.created_at)).limit(limit)).mappings().all()
     return [_row_to_dict(row) for row in rows]
+
+
+def get_target_markets() -> list[dict[str, Any]]:
+    stats = get_market_stats(250)
+    covered = {(item.get("city"), item.get("state")) for item in stats}
+    return [
+        {
+            **market,
+            "coverage": "active" if (market["city"], market["state"]) in covered else "target",
+            "reason": "Low acquisition cost, Section 8 demand, high cash-flow potential, or low investor saturation.",
+        }
+        for market in TARGET_MARKETS
+    ]
+
+
+def get_market_heatmap_geojson(limit: int = 100) -> dict[str, Any]:
+    features = []
+    for market in get_market_stats(limit):
+        coords = MARKET_COORDS.get((market.get("city"), market.get("state")))
+        if not coords:
+            continue
+        latitude, longitude = coords
+        features.append(
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [longitude, latitude],
+                },
+                "properties": {
+                    **market,
+                    "weight": market.get("opportunity_score") or 0,
+                },
+            }
+        )
+    return {
+        "type": "FeatureCollection",
+        "features": features,
+    }
+
+
+def get_ai_recommendations(
+    max_price: Optional[float] = None,
+    preferred_states: Optional[list[str]] = None,
+    limit: int = 50,
+) -> list[dict[str, Any]]:
+    scores = calculate_all_property_scores()
+    score_by_property_id = {int(score["property_id"]): score for score in scores}
+    with get_property_engine().begin() as conn:
+        rows = conn.execute(select(properties)).mappings().all()
+    recommendations = []
+    preferred_state_set = {state.upper() for state in preferred_states or [] if state}
+    for row in rows:
+        item = _row_to_dict(row)
+        price = _num(item.get("estimated_value")) or 0
+        state = str(item.get("state") or "").upper()
+        if max_price is not None and price and price > max_price:
+            continue
+        if preferred_state_set and state not in preferred_state_set:
+            continue
+        score = score_by_property_id.get(int(item["id"]), {})
+        item["aiScore"] = score.get("total_score", item.get("deal_score", 0))
+        item["aiReasoning"] = score.get("ai_reasoning", {})
+        recommendations.append(item)
+    recommendations.sort(key=lambda item: item.get("aiScore") or 0, reverse=True)
+    return recommendations[:limit]
