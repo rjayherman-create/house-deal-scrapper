@@ -155,6 +155,18 @@ async def root():
     return FileResponse(UI_INDEX)
 
 
+@app.get("/dashboard")
+@app.get("/research")
+@app.get("/database")
+@app.get("/ai")
+@app.get("/maps")
+@app.get("/alerts")
+@app.get("/crm")
+@app.get("/settings")
+async def app_page():
+    return FileResponse(UI_INDEX)
+
+
 @app.get("/status")
 async def status():
     return {"status": "House Deal Scraper Backend Running"}

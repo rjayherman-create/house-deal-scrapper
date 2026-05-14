@@ -914,6 +914,7 @@
       return {
         ...p,
         id: p.id || p.property_intelligence_id || p.source_id || p.address,
+        propertyDbId: p.property_intelligence_id || p.propertyDbId || (p.deal_score !== undefined || p.dealScore !== undefined || p.estimated_value !== undefined || p.estimatedValue !== undefined || p.ai_summary !== undefined ? p.id : null),
         address: p.address || p.formattedAddress || p.formatted_address || "Unknown address",
         city: p.city || "",
         state: p.state || "",
@@ -921,7 +922,7 @@
         county: p.county || "",
         dealScore: Number(p.dealScore ?? p.deal_score ?? raw?.dealScore ?? raw?.deal_score ?? 0),
         estimatedRent: p.estimatedRent ?? p.estimated_rent ?? p.rentEstimate ?? p.rent_estimate,
-        estimatedValue: p.estimatedValue ?? p.estimated_value ?? p.valueEstimate ?? p.price ?? p.asking_price,
+        estimatedValue: p.estimatedValue ?? p.estimated_value ?? p.valueEstimate ?? p.price ?? p.asking_price ?? p.askingPrice,
         taxAmountDue: p.taxAmountDue ?? p.tax_amount_due,
         yearBuilt: p.yearBuilt ?? p.year_built,
         sourceUrl: p.source_url ?? p.sourceUrl ?? links.source,
@@ -947,7 +948,16 @@
       container.innerHTML = `<div class="empty-state error">${escapeHtml(message)}</div>`;
     }
 
-    function switchTab(tab) {
+    function routeForTab(tab) {
+      return tab === "dashboard" ? "/dashboard" : `/${tab}`;
+    }
+
+    function tabForPath(pathname) {
+      const tab = String(pathname || "").replace(/^\/+/, "") || "dashboard";
+      return tabTitles[tab] ? tab : "dashboard";
+    }
+
+    function switchTab(tab, options = {}) {
       state.activeTab = tab;
       document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.add("hidden"));
       $("tab-" + tab)?.classList.remove("hidden");
@@ -956,6 +966,9 @@
       });
       $("pageTitle").textContent = tabTitles[tab][0];
       $("pageSubtitle").textContent = tabTitles[tab][1];
+      if (!options.skipHistory && location.pathname !== routeForTab(tab)) {
+        history.pushState({ tab }, "", routeForTab(tab));
+      }
       if (tab === "database" && !state.dashboardItems.length) {
         $("listingsStatus").textContent = "Load listings or high-score deals to begin.";
       }
@@ -1168,7 +1181,7 @@
         details.appendChild(photoPanel);
       }
 
-      if (property.id && Number.isFinite(Number(property.id))) {
+      if (property.propertyDbId && Number.isFinite(Number(property.propertyDbId))) {
         const notePanel = document.createElement("div");
         notePanel.className = "mini-panel";
         notePanel.innerHTML = `<h3>Investor Notes</h3>`;
@@ -1245,12 +1258,19 @@
       report.print();
     }
 
+    function propertyDatabaseId(property) {
+      return property.propertyDbId && Number.isFinite(Number(property.propertyDbId))
+        ? Number(property.propertyDbId)
+        : null;
+    }
+
     async function updatePropertyStatus(property, status) {
-      if (!property.id || !Number.isFinite(Number(property.id))) {
+      const propertyId = propertyDatabaseId(property);
+      if (!propertyId) {
         $("listingsStatus").textContent = "This scraped listing has not been saved to the property database yet.";
         return;
       }
-      const response = await fetch(`/api/properties/${property.id}/status`, {
+      const response = await fetch(`/api/properties/${propertyId}/status`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
@@ -1259,23 +1279,29 @@
     }
 
     async function addToWatchlist(property) {
-      if (!property.id || !Number.isFinite(Number(property.id))) {
+      const propertyId = propertyDatabaseId(property);
+      if (!propertyId) {
         $("listingsStatus").textContent = "This listing must be saved before adding it to a watchlist.";
         return;
       }
       const response = await fetch("/api/watchlist/add", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ propertyId: Number(property.id), userId: "dashboard" }),
+        body: JSON.stringify({ propertyId, userId: "dashboard" }),
       });
       $("listingsStatus").textContent = response.ok ? "Property added to watchlist." : "Could not add property to watchlist.";
     }
 
     async function savePropertyNote(property, note) {
+      const propertyId = propertyDatabaseId(property);
+      if (!propertyId) {
+        $("listingsStatus").textContent = "This listing must be saved before notes can be attached.";
+        return;
+      }
       const response = await fetch("/api/properties/note", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ propertyId: Number(property.id), userId: "dashboard", note }),
+        body: JSON.stringify({ propertyId, userId: "dashboard", note }),
       });
       $("listingsStatus").textContent = response.ok ? "Note saved." : "Could not save note.";
     }
@@ -1525,9 +1551,11 @@
       }
     });
 
+    window.addEventListener("popstate", () => switchTab(tabForPath(location.pathname), { skipHistory: true }));
+
     loadSavedSearches();
     loadSources();
-    switchTab("dashboard");
+    switchTab(tabForPath(location.pathname), { skipHistory: true });
   </script>
 </body>
 </html>
