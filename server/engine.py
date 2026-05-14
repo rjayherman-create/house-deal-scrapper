@@ -23,6 +23,7 @@ Core features:
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+import logging
 import math
 import re
 
@@ -40,6 +41,8 @@ from server.scrapers.rentcast import (
     is_rentcast_enabled,
 )
 from server.location_normalizer import normalize_location
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------
@@ -556,6 +559,14 @@ def search_listings(city: str, state: str, include_photos: bool = False) -> List
     for source_name, scraper in scrapers:
         try:
             results = scraper(city, state, limit=20)
+            logger_count = len(results) if results else 0
+            logger.info(
+                "%s scraper returned %d candidate listing(s) for %s, %s",
+                source_name,
+                logger_count,
+                city,
+                state,
+            )
             for r in results:
                 address = (r.get("address") or "").strip()
                 price = parse_price(r.get("asking_price"))
@@ -576,7 +587,14 @@ def search_listings(city: str, state: str, include_photos: bool = False) -> List
                 normalized["address"] = address
                 normalized["asking_price"] = price
                 listings_raw.append((source_name, normalized))
-        except Exception:
+        except Exception as exc:
+            logger.warning(
+                "%s scraper failed for %s, %s: %s",
+                source_name,
+                city,
+                state,
+                exc,
+            )
             continue
 
     analyses = []

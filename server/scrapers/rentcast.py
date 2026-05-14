@@ -1,8 +1,11 @@
 import os
+import logging
 from typing import Any, Dict, List, Optional
 
 import requests
 
+
+logger = logging.getLogger(__name__)
 
 RENTCAST_BASE_URL = os.getenv("RENTCAST_API_BASE_URL", "https://api.rentcast.io/v1").rstrip("/")
 
@@ -32,6 +35,11 @@ def _request(path: str, params: Dict[str, Any]) -> Any:
     return response.json()
 
 
+def _payload_rows(payload: Any) -> List[Dict[str, Any]]:
+    rows = payload if isinstance(payload, list) else payload.get("data", []) if isinstance(payload, dict) else []
+    return [item for item in rows if isinstance(item, dict)]
+
+
 def check_rentcast(city: str = "Detroit", state: str = "MI") -> Dict[str, Any]:
     api_key = os.getenv("RENTCAST_API_KEY")
     if not api_key:
@@ -53,7 +61,7 @@ def check_rentcast(city: str = "Detroit", state: str = "MI") -> Dict[str, Any]:
                 "limit": 3,
             },
         )
-        rows = payload if isinstance(payload, list) else payload.get("data", []) if isinstance(payload, dict) else []
+        rows = _payload_rows(payload)
         return {
             "enabled": True,
             "ok": True,
@@ -163,18 +171,57 @@ def fetch_rentcast(city: str, state: str, limit: int = 20) -> List[Dict[str, Any
     that the analysis engine can score without brittle HTML scraping.
     """
     if not is_rentcast_enabled():
+        logger.warning("RentCast: RENTCAST_API_KEY is not configured")
         return []
 
-    payload = _request(
-        "/listings/sale",
-        {
-            "city": city,
-            "state": state.upper(),
-            "status": "Active",
-            "limit": limit,
-        },
-    )
-    rows = payload if isinstance(payload, list) else payload.get("data", []) if isinstance(payload, dict) else []
+    search_attempts = [
+        (
+            "city_active",
+            {
+                "city": city,
+                "state": state.upper(),
+                "status": "Active",
+                "limit": limit,
+            },
+        ),
+        (
+            "city_any_status",
+            {
+                "city": city,
+                "state": state.upper(),
+                "limit": limit,
+            },
+        ),
+        (
+            "state_active",
+            {
+                "state": state.upper(),
+                "status": "Active",
+                "limit": max(limit, 50),
+            },
+        ),
+    ]
+
+    rows: List[Dict[str, Any]] = []
+    scope = "none"
+    for attempt_scope, params in search_attempts:
+        try:
+            payload = _request("/listings/sale", params)
+        except Exception as exc:
+            logger.warning("RentCast %s lookup failed for %s, %s: %s", attempt_scope, city, state, exc)
+            continue
+
+        rows = _payload_rows(payload)
+        logger.info(
+            "RentCast %s lookup returned %d raw listing(s) for %s, %s",
+            attempt_scope,
+            len(rows),
+            city,
+            state.upper(),
+        )
+        if rows:
+            scope = attempt_scope
+            break
 
     listings = []
     for item in rows[:limit]:
@@ -182,7 +229,9 @@ def fetch_rentcast(city: str, state: str, limit: int = 20) -> List[Dict[str, Any
             continue
         normalized = _normalize_sale_listing(item, city, state.upper())
         if normalized["address"] and normalized["asking_price"]:
+            normalized["search_scope"] = scope
             listings.append(normalized)
+    logger.info("RentCast: normalized %d listing(s) for %s, %s", len(listings), city, state.upper())
     return listings
 
 
