@@ -5,7 +5,7 @@ FastAPI backend for House Deal Scraper.
 import logging
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from starlette.concurrency import run_in_threadpool
@@ -25,6 +25,11 @@ from server.property_system import (
     ingest_property_from_analysis,
     init_property_system_db,
     update_property_status,
+)
+from server.property_condition_analyzer import (
+    PropertyAnalyzerConfigurationError,
+    analyze_property_images,
+    is_openai_configured,
 )
 from server.scrapers.craigslist import fetch_craigslist
 from server.scrapers.facebook import fetch_facebook
@@ -160,6 +165,7 @@ async def data_sources():
     rentcast_status = await run_in_threadpool(check_rentcast)
     return {
         "primary_ready": has_primary_listing_source(),
+        "ai_analyzer_ready": is_openai_configured(),
         "live_check": {
             "rentcast": rentcast_status,
         },
@@ -170,6 +176,39 @@ async def data_sources():
             if source["required_for_analysis"] and not source["enabled"]
         ],
     }
+
+
+@app.post("/api/analyze-property")
+async def api_analyze_property(
+    images: list[UploadFile] = File(...),
+    address: str = Form(""),
+    city: str = Form(""),
+    state: str = Form(""),
+    asking_price: Optional[float] = Form(None),
+    rent_estimate: Optional[float] = Form(None),
+    arv_estimate: Optional[float] = Form(None),
+):
+    try:
+        image_payload = []
+        for image in images[:20]:
+            image_payload.append((image.filename or "property.jpg", image.content_type or "image/jpeg", await image.read()))
+        return await run_in_threadpool(
+            analyze_property_images,
+            image_payload,
+            address,
+            city,
+            state,
+            asking_price,
+            rent_estimate,
+            arv_estimate,
+        )
+    except PropertyAnalyzerConfigurationError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.exception("property condition analysis failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Property condition analysis failed.") from exc
 
 
 @app.get("/debug/live-data")

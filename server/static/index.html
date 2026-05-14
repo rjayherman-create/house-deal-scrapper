@@ -55,7 +55,7 @@
       gap: 8px;
       color: var(--text);
     }
-    input[type="text"], input[type="number"] {
+    input[type="text"], input[type="number"], input[type="file"] {
       background: #0e1426;
       border: 1px solid var(--border);
       color: var(--text);
@@ -130,6 +130,27 @@
       color: var(--error);
       font-weight: 600;
     }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .metric {
+      border: 1px solid var(--border);
+      background: #0e162c;
+      border-radius: 10px;
+      padding: 10px;
+    }
+    .metric span {
+      display: block;
+      color: var(--muted);
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .metric strong {
+      font-size: 18px;
+    }
   </style>
 </head>
 <body>
@@ -169,6 +190,31 @@
     </div>
 
     <div class="panel">
+      <h2>AI Property Condition Analyzer</h2>
+      <div class="row">
+        <label for="conditionAddress">
+          Address
+          <input id="conditionAddress" type="text" placeholder="123 Main St" />
+        </label>
+        <label for="conditionCity">
+          City
+          <input id="conditionCity" type="text" placeholder="Buffalo" />
+        </label>
+        <label for="conditionState">
+          State
+          <input id="conditionState" type="text" maxlength="2" placeholder="NY" />
+        </label>
+        <label for="conditionImages">
+          Photos
+          <input id="conditionImages" type="file" accept="image/*" multiple />
+        </label>
+        <button id="conditionBtn">Analyze Photos</button>
+      </div>
+      <p id="conditionStatus" class="muted"></p>
+      <div id="conditionResults"></div>
+    </div>
+
+    <div class="panel">
       <h2>Dashboard</h2>
       <div class="row">
         <button id="loadListingsBtn" class="secondary">Load Listings</button>
@@ -185,6 +231,9 @@
     const loadDealsBtn = document.getElementById("loadDealsBtn");
     const analyzeStatus = document.getElementById("analyzeStatus");
     const listingsStatus = document.getElementById("listingsStatus");
+    const conditionBtn = document.getElementById("conditionBtn");
+    const conditionStatus = document.getElementById("conditionStatus");
+    const conditionResults = document.getElementById("conditionResults");
     const analyzeResults = document.getElementById("analyzeResults");
     const listingsResults = document.getElementById("listingsResults");
     const sourcesStatus = document.getElementById("sourcesStatus");
@@ -317,6 +366,68 @@
       container.appendChild(fragment);
     }
 
+    function renderConditionResult(result) {
+      conditionResults.textContent = "";
+      const card = document.createElement("div");
+      card.className = "result-card";
+
+      const title = document.createElement("strong");
+      title.textContent = "Investment Analysis";
+      card.appendChild(title);
+
+      const metrics = document.createElement("div");
+      metrics.className = "metric-grid";
+      const metricRows = [
+        ["Condition Score", `${result.conditionScore ?? 0}/100`],
+        ["Estimated Rehab", `$${Number(result.rehabEstimate || 0).toLocaleString()}`],
+        ["Estimated ARV", `$${Number(result.arv || 0).toLocaleString()}`],
+        ["Estimated Rent", `$${Number(result.rentEstimate || 0).toLocaleString()}/mo`],
+        ["Flip Potential", result.flipPotential || "Unknown"],
+        ["Rental Potential", result.rentalPotential || "Unknown"],
+        ["Section 8", result.section8Suitability || "Unknown"],
+      ];
+      for (const [label, value] of metricRows) {
+        const box = document.createElement("div");
+        box.className = "metric";
+        const labelEl = document.createElement("span");
+        labelEl.textContent = label;
+        const valueEl = document.createElement("strong");
+        valueEl.textContent = value;
+        box.appendChild(labelEl);
+        box.appendChild(valueEl);
+        metrics.appendChild(box);
+      }
+      card.appendChild(metrics);
+
+      const breakdown = document.createElement("div");
+      breakdown.className = "metric-grid";
+      for (const [key, value] of Object.entries(result.conditionBreakdown || {})) {
+        const box = document.createElement("div");
+        box.className = "metric";
+        const labelEl = document.createElement("span");
+        labelEl.textContent = key;
+        const valueEl = document.createElement("strong");
+        valueEl.textContent = String(value);
+        box.appendChild(labelEl);
+        box.appendChild(valueEl);
+        breakdown.appendChild(box);
+      }
+      card.appendChild(breakdown);
+
+      if (Array.isArray(result.warnings) && result.warnings.length) {
+        const warnings = document.createElement("p");
+        warnings.className = "error";
+        warnings.textContent = `Warnings: ${result.warnings.join("; ")}`;
+        card.appendChild(warnings);
+      }
+
+      const summary = document.createElement("p");
+      summary.className = "muted";
+      summary.textContent = result.summary || "No summary returned.";
+      card.appendChild(summary);
+      conditionResults.appendChild(card);
+    }
+
     function renderSources(data) {
       sourcesResults.textContent = "";
       const missing = data.required_setup || [];
@@ -444,6 +555,38 @@
       } catch (err) {
         listingsStatus.textContent = "";
         renderError(listingsResults, `Dashboard failed: ${err.message}`);
+      }
+    });
+
+    conditionBtn.addEventListener("click", async () => {
+      conditionResults.textContent = "";
+      const files = document.getElementById("conditionImages").files;
+      if (!files || !files.length) {
+        conditionStatus.textContent = "";
+        renderError(conditionResults, "Upload at least one property photo.");
+        return;
+      }
+      const formData = new FormData();
+      for (const file of files) formData.append("images", file);
+      formData.append("address", document.getElementById("conditionAddress").value.trim());
+      formData.append("city", document.getElementById("conditionCity").value.trim());
+      formData.append("state", document.getElementById("conditionState").value.trim());
+
+      conditionStatus.textContent = "Analyzing property photos...";
+      try {
+        const response = await fetch("/api/analyze-property", {
+          method: "POST",
+          body: formData,
+        });
+        if (!response.ok) {
+          const errorBody = await response.json().catch(() => null);
+          throw new Error(errorBody?.detail || `Request failed: ${response.status}`);
+        }
+        renderConditionResult(await response.json());
+        conditionStatus.textContent = "Analysis complete.";
+      } catch (err) {
+        conditionStatus.textContent = "";
+        renderError(conditionResults, `Property analysis failed: ${err.message}`);
       }
     });
 

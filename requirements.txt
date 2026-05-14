@@ -9,3 +9,5 @@ httpx
 requests
 beautifulsoup4
 lxml
+openai
+python-multipart
