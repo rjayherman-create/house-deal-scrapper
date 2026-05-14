@@ -651,7 +651,7 @@
       </nav>
 
       <div class="sidebar-footer">
-        <div class="coverage-pill">Low-cost engine active. Premium APIs stay off unless enabled.</div>
+        <div class="coverage-pill">Realtime-only mode. Missing provider data is shown as unavailable.</div>
         <button id="collapseSidebarBtn" type="button" class="secondary">Collapse</button>
       </div>
     </aside>
@@ -689,7 +689,7 @@
           <div class="stat-card">
             <div class="stat-label">Premium APIs</div>
             <div id="statApiMode" class="stat-value">Off</div>
-            <div class="stat-note">RentCast disabled by default</div>
+            <div class="stat-note">Provider data only; no generated filler data</div>
           </div>
         </div>
 
@@ -1052,14 +1052,6 @@
       };
     }
 
-    function livePreviewImage(property) {
-      if (property.photos?.length) return "";
-      const links = propertyLinks(property);
-      const target = links.Source || links.Zillow || links.Realtor || links.Redfin || links.Maps;
-      if (!target) return "";
-      return `https://image.thum.io/get/width/420/crop/260/noanimate/${encodeURIComponent(target)}`;
-    }
-
     function showError(container, message) {
       container.innerHTML = `<div class="empty-state error">${escapeHtml(message)}</div>`;
     }
@@ -1148,21 +1140,6 @@
         img.loading = "lazy";
         return img;
       }
-      const previewUrl = livePreviewImage(property);
-      if (previewUrl) {
-        const img = document.createElement("img");
-        img.className = "thumb";
-        img.src = previewUrl;
-        img.alt = `${property.address} live web preview`;
-        img.loading = "lazy";
-        img.onerror = () => {
-          const fallback = document.createElement("div");
-          fallback.className = "thumb no-photo";
-          fallback.textContent = "Open links";
-          img.replaceWith(fallback);
-        };
-        return img;
-      }
       const fallback = document.createElement("div");
       fallback.className = "thumb no-photo";
       fallback.textContent = "Open links";
@@ -1207,7 +1184,7 @@
         <div class="property-subtitle">${escapeHtml(location || property.county || "Location unavailable")}</div>
         <div class="badges">
           ${scoreBadge(property)}
-          ${property.photos?.length ? `<span class="badge">${property.photos.length} photo${property.photos.length === 1 ? "" : "s"}</span>` : `<span class="badge yellow">Live preview</span>`}
+          ${property.photos?.length ? `<span class="badge">${property.photos.length} scraped photo${property.photos.length === 1 ? "" : "s"}</span>` : `<span class="badge red">No scraped photos</span>`}
           ${property.sourceUrl ? `<span class="badge">Direct source</span>` : `<span class="badge yellow">Search links</span>`}
         </div>
       `;
@@ -1374,23 +1351,6 @@
         });
         photoPanel.appendChild(photoGrid);
         details.appendChild(photoPanel);
-      } else if (!property.photos?.length) {
-        const previewUrl = livePreviewImage(property);
-        if (previewUrl) {
-          const previewPanel = document.createElement("div");
-          previewPanel.className = "mini-panel";
-          previewPanel.innerHTML = `<h3>Live Web Preview</h3>`;
-          const img = document.createElement("img");
-          img.className = "thumb";
-          img.style.width = "100%";
-          img.style.height = "180px";
-          img.style.objectFit = "cover";
-          img.loading = "lazy";
-          img.src = previewUrl;
-          img.alt = `${property.address} live web preview`;
-          previewPanel.appendChild(img);
-          details.appendChild(previewPanel);
-        }
       }
 
       if (property.propertyDbId && Number.isFinite(Number(property.propertyDbId))) {
@@ -1856,7 +1816,7 @@
         const realtyMole = data.live_check?.realty_mole;
         $("sourcesStatus").textContent = realtyMole?.ok
           ? realtyMole.message
-          : rentcast?.message || realtyMole?.message || "Low-cost public-source data engine is active.";
+          : rentcast?.message || realtyMole?.message || "Realtime guardrails are active. Missing provider data is shown as unavailable.";
         $("statApiMode").textContent = rentcast?.enabled ? "On" : "Off";
         const sourceCards = (data.sources || []).map((source) => `
           <div class="source-card">

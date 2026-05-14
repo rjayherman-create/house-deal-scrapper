@@ -1,7 +1,7 @@
-"""Low-cost property data engine.
+"""Realtime data policy helpers.
 
-This module keeps the default analysis path cheap: cached data, internal rent
-estimates, Section 8/FMR-style estimates, and premium API placeholders only.
+This module keeps cache and deal-score utilities, but it does not fabricate
+live rent comps, Section 8 values, or premium provider payloads.
 """
 
 from __future__ import annotations
@@ -11,56 +11,6 @@ from typing import Any, Mapping, Optional
 
 
 PROPERTY_CACHE: dict[str, dict[str, Any]] = {}
-
-
-def estimate_section8_rent(bedrooms: Optional[float], city: str = "", state: str = "") -> int:
-    bedroom_count = int(bedrooms or 2)
-    state_adjustments = {
-        "IL": 0,
-        "MI": -75,
-        "OH": -100,
-        "NY": 175,
-        "PA": -50,
-        "NJ": 250,
-        "FL": 125,
-        "TX": 50,
-    }
-    estimates = {
-        0: 850,
-        1: 950,
-        2: 1250,
-        3: 1550,
-        4: 1850,
-        5: 2100,
-    }
-    base = estimates.get(bedroom_count, 1200 + max(0, bedroom_count - 2) * 300)
-    return max(650, base + state_adjustments.get((state or "").upper(), 0))
-
-
-def estimate_rent(data: Mapping[str, Any]) -> int:
-    bedrooms = int(float(data.get("bedrooms") or data.get("beds") or 2))
-    sqft = float(data.get("sqft") or data.get("squareFootage") or 0)
-    condition_score = float(data.get("conditionScore") or data.get("condition_score") or 60)
-
-    if bedrooms <= 1:
-        rent = 850
-    elif bedrooms == 2:
-        rent = 1100
-    elif bedrooms == 3:
-        rent = 1400
-    else:
-        rent = 1700
-
-    if sqft > 1400:
-        rent += 150
-    if data.get("section8Area"):
-        rent += 100
-    if data.get("lowIncomeArea"):
-        rent -= 50
-    if condition_score > 75:
-        rent += 200
-
-    return max(600, rent)
 
 
 def _cache_key(property_data: Mapping[str, Any]) -> str:
@@ -93,19 +43,11 @@ def enrich_property_low_cost(property_data: Mapping[str, Any]) -> dict[str, Any]
     if cached:
         return {**cached, "cacheHit": True}
 
-    city = str(property_data.get("city") or "")
-    state = str(property_data.get("state") or "")
-    bedrooms = property_data.get("bedrooms") or property_data.get("beds")
-    rent_estimate = estimate_rent(property_data)
-    section8_estimate = estimate_section8_rent(bedrooms, city, state)
-
     enriched = {
         **dict(property_data),
-        "rentEstimate": rent_estimate,
-        "section8Estimate": section8_estimate,
-        "dataStrategy": "LOW_COST_ENGINE",
+        "dataStrategy": "REALTIME_ONLY",
         "premiumApisUsed": False,
-        "premiumApiPolicy": "RentCast and other paid APIs are disabled by default and reserved for future premium/high-score enrichment.",
+        "premiumApiPolicy": "Paid APIs are used only when explicitly configured. Missing provider data is reported as unavailable.",
         "enrichedAt": datetime.utcnow().isoformat(),
         "updatedAt": datetime.utcnow().isoformat(),
     }
@@ -162,32 +104,47 @@ def calculate_low_cost_deal_score(property_data: Mapping[str, Any]) -> int:
 def analyze_low_cost_property(property_data: Mapping[str, Any]) -> dict[str, Any]:
     enriched = enrich_property_low_cost(property_data)
     deal_score = calculate_low_cost_deal_score(enriched)
-    premium_data = None
-    if deal_score >= 85:
-        premium_data = {
-            "future": "Premium enrichment placeholder. Paid APIs remain disabled until explicitly enabled for premium/high-score properties.",
-        }
     return {
         "success": True,
-        "strategy": "LOW_COST_ENGINE",
+        "strategy": "REALTIME_ONLY",
         "property": {
             **enriched,
             "dealScore": deal_score,
         },
-        "premiumData": premium_data,
+        "premiumData": None,
+        "message": "No synthetic enrichment was applied. Connect live providers or import source data for additional fields.",
     }
 
 
 def rent_comps(city: str, state: str, bedrooms: Optional[float]) -> dict[str, Any]:
-    estimated = estimate_section8_rent(bedrooms, city, state)
+    from sqlalchemy import select
+
+    from server.property_system import _jsonable, _row_to_dict, get_property_engine
+    from server.rent_analyzer import rental_comps
+
+    statement = select(rental_comps).where(rental_comps.c.comp_state == state.upper()).limit(50)
+    if city:
+        statement = statement.where(rental_comps.c.comp_city == city)
+    if bedrooms is not None:
+        try:
+            bedroom_count = int(float(bedrooms))
+            statement = statement.where(rental_comps.c.beds == bedroom_count)
+        except (TypeError, ValueError):
+            pass
+    with get_property_engine().begin() as conn:
+        rows = conn.execute(statement).mappings().all()
     return {
         "success": True,
-        "strategy": "LOW_COST_ENGINE",
-        "comps": [
-            {"address": f"Typical {city} {int(bedrooms or 2)}BR comp", "rent": estimated},
-            {"address": f"Upper-band {city} {int(bedrooms or 2)}BR comp", "rent": estimated + 100},
-            {"address": f"Conservative {city} {int(bedrooms or 2)}BR comp", "rent": max(600, estimated - 100)},
-        ],
+        "strategy": "REALTIME_ONLY",
+        "city": city,
+        "state": state,
+        "bedrooms": bedrooms,
+        "comps": [_jsonable(_row_to_dict(row)) for row in rows],
+        "message": (
+            f"Found {len(rows)} saved provider/database rental comp(s)."
+            if rows
+            else "Realtime rental comps are unavailable until a live rental provider or imported comp dataset is connected."
+        ),
     }
 
 
@@ -196,8 +153,8 @@ def data_priority() -> dict[str, Any]:
         "success": True,
         "strategy": {
             "countyData": True,
-            "internalRentEngine": True,
-            "section8Estimates": True,
+            "internalRentEngine": False,
+            "section8Estimates": False,
             "cacheEnabled": True,
             "premiumApisLimited": True,
             "rentcastDisabled": True,
@@ -206,10 +163,10 @@ def data_priority() -> dict[str, Any]:
                 "County GIS",
                 "Tax Delinquency",
                 "Foreclosure Filings",
-                "HUD/Section 8 Rent Data",
-                "Internal Rent Engine",
-                "Cached MLS/Public Data",
-                "Optional Premium APIs",
+                "HUD/Section 8 Rent Data when HUD_USER_TOKEN is configured",
+                "Imported rental comp datasets",
+                "Provider-backed MLS/Public Data",
+                "Optional Premium APIs when explicitly enabled",
             ],
         },
     }

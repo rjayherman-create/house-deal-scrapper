@@ -1,9 +1,8 @@
 """Rent analyzer and comp rent engine for House Deal Scraper.
 
-This is the FastAPI/Python implementation of the V1 rent-analysis system. It
-uses saved property intelligence as the first comp source, then falls back to
-internal HUD-style rent estimates so every property can receive a useful rent
-analysis even when external rental APIs are unavailable.
+Realtime mode is intentionally strict: it uses saved/provider rent values,
+database comps, and official HUD FMR data when configured. It does not fabricate
+synthetic comps, market rent, or Section 8 numbers when live data is missing.
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from typing import Any, Mapping, Optional
 
 from sqlalchemy import Column, DateTime, Integer, Numeric, String, Table, Text, delete, desc, insert, select
 
-from server.low_cost_data_engine import estimate_rent, estimate_section8_rent
+from server.hud_fmr import lookup_hud_fmr
 from server.property_system import _jsonable, _row_to_dict, get_property_engine, metadata, properties
 
 
@@ -155,65 +154,20 @@ def _comp_weight(subject: Mapping[str, Any], comp: Mapping[str, Any]) -> float:
     return max(5.0, min(weight, 100.0))
 
 
-def _section8_rent_for(property_data: Mapping[str, Any]) -> float:
+def _section8_rent_for(property_data: Mapping[str, Any]) -> Optional[float]:
     bedrooms = _int(property_data.get("bedrooms")) or 2
-    city = str(property_data.get("city") or "")
     state = str(property_data.get("state") or "")
-    return float(estimate_section8_rent(bedrooms, city, state))
+    county = str(property_data.get("county") or "")
+    zip_code = str(property_data.get("zip") or "")
+    result = lookup_hud_fmr(state=state, county=county, zip_code=zip_code, bedrooms=bedrooms)
+    return _num(result.get("rent")) if result else None
 
 
-def _fallback_rent_for(property_data: Mapping[str, Any]) -> float:
+def _saved_rent_for(property_data: Mapping[str, Any]) -> Optional[float]:
     rent = _num(property_data.get("estimated_rent"))
     if rent:
         return rent
-    return float(
-        estimate_rent(
-            {
-                "bedrooms": property_data.get("bedrooms"),
-                "sqft": property_data.get("sqft"),
-                "city": property_data.get("city"),
-                "state": property_data.get("state"),
-            }
-        )
-    )
-
-
-def _synthetic_comps(property_data: Mapping[str, Any], base_rent: float, section8_rent: float) -> list[dict[str, Any]]:
-    beds = _num(property_data.get("bedrooms")) or 2
-    baths = _num(property_data.get("bathrooms")) or 1
-    sqft = _int(property_data.get("sqft")) or 1000
-    city = property_data.get("city")
-    state = property_data.get("state")
-    zip_code = property_data.get("zip")
-    address = property_data.get("address") or "Subject property"
-    values = [
-        ("Internal conservative rent comp", max(650, base_rent * 0.92), 0.4, 72),
-        ("Internal mid-market rent comp", base_rent, 0.8, 78),
-        ("Section 8/payment-standard comp", max(base_rent * 1.03, section8_rent), 1.1, 70),
-    ]
-    return [
-        {
-            "property_id": property_data["id"],
-            "comp_address": f"{label} near {address}",
-            "comp_city": city,
-            "comp_state": state,
-            "comp_zip": zip_code,
-            "rent": round(rent),
-            "beds": beds,
-            "baths": baths,
-            "sqft": sqft,
-            "property_type": property_data.get("property_type"),
-            "latitude": None,
-            "longitude": None,
-            "source": "internal_model",
-            "listed_date": datetime.utcnow(),
-            "days_on_market": int(distance * 30),
-            "distance_miles": distance,
-            "confidence_weight": weight,
-            "created_at": datetime.utcnow(),
-        }
-        for label, rent, distance, weight in values
-    ]
+    return None
 
 
 def _database_rental_comps(property_data: Mapping[str, Any], limit: int = 20) -> list[dict[str, Any]]:
@@ -260,6 +214,8 @@ def _database_rental_comps(property_data: Mapping[str, Any], limit: int = 20) ->
 
 
 def _confidence(comp_count: int, average_weight: float) -> float:
+    if comp_count <= 0:
+        return 0
     if comp_count >= 10:
         base = 85
     elif comp_count >= 5:
@@ -271,9 +227,18 @@ def _confidence(comp_count: int, average_weight: float) -> float:
     return max(0, min(98, round(base + (average_weight - 55) * 0.35, 1)))
 
 
-def _deal_metrics(property_data: Mapping[str, Any], rent: float, section8_rent: float) -> dict[str, Any]:
+def _deal_metrics(property_data: Mapping[str, Any], rent: Optional[float], section8_rent: Optional[float]) -> dict[str, Any]:
     purchase_price = _num(property_data.get("estimated_value")) or 0
     tax_due = _num(property_data.get("tax_amount_due")) or 0
+    if not rent:
+        return {
+            "gross_yield": 0,
+            "cap_rate": 0,
+            "monthly_cash_flow": 0,
+            "cash_on_cash_return": 0,
+            "expense_ratio": 0,
+            "section8_spread": None,
+        }
     monthly_taxes = tax_due / 12 if tax_due else max(60, purchase_price * 0.018 / 12) if purchase_price else 90
     insurance = max(70, purchase_price * 0.008 / 12) if purchase_price else 85
     maintenance = rent * 0.08
@@ -284,14 +249,14 @@ def _deal_metrics(property_data: Mapping[str, Any], rent: float, section8_rent: 
     monthly_cash_flow = rent - monthly_expenses
     gross_yield = ((rent * 12) / purchase_price * 100) if purchase_price else 0
     cap_rate = (noi / purchase_price * 100) if purchase_price else 0
-    section8_spread = section8_rent - rent
+    section8_spread = section8_rent - rent if section8_rent is not None else None
     return {
         "gross_yield": round(gross_yield, 1),
         "cap_rate": round(cap_rate, 1),
         "monthly_cash_flow": round(monthly_cash_flow),
         "cash_on_cash_return": round(cap_rate, 1),
         "expense_ratio": round(monthly_expenses / rent * 100, 1) if rent else 0,
-        "section8_spread": round(section8_spread),
+        "section8_spread": round(section8_spread) if section8_spread is not None else None,
     }
 
 
@@ -302,34 +267,48 @@ def generate_rent_analysis(property_id: int) -> dict[str, Any]:
         raise ValueError("Property not found")
 
     property_data = _row_to_dict(subject)
-    base_rent = _fallback_rent_for(property_data)
+    saved_rent = _saved_rent_for(property_data)
     section8_rent = _section8_rent_for(property_data)
     comps = _database_rental_comps(property_data)
-    if len(comps) < 3:
-        comps.extend(_synthetic_comps(property_data, base_rent, section8_rent))
 
     weights = [_num(comp.get("confidence_weight")) or 0 for comp in comps]
     rents = [_num(comp.get("rent")) or 0 for comp in comps]
     total_weight = sum(weights)
-    estimated_rent = sum(rent * weight for rent, weight in zip(rents, weights)) / total_weight if total_weight else base_rent
-    rent_low = min(rents) if rents else estimated_rent * 0.92
-    rent_high = max(rents) if rents else estimated_rent * 1.08
+    estimated_rent = sum(rent * weight for rent, weight in zip(rents, weights)) / total_weight if total_weight else saved_rent
+    rent_low = min(rents) if rents else saved_rent
+    rent_high = max(rents) if rents else saved_rent
     confidence_score = _confidence(len(comps), total_weight / len(comps) if comps else 0)
+    if saved_rent and not comps:
+        confidence_score = 35
     metrics = _deal_metrics(property_data, estimated_rent, section8_rent)
-    market_rent_gap = estimated_rent - base_rent
-    under_rented_score = "HIGH" if market_rent_gap >= 300 else "MEDIUM" if market_rent_gap >= 125 else "LOW"
-    summary = (
-        f"Estimated monthly rent is ${estimated_rent:,.0f} based on {len(comps)} comp signal(s). "
-        f"Section 8 estimate is ${section8_rent:,.0f}. "
-        f"Projected monthly cash flow is ${metrics['monthly_cash_flow']:,.0f} before financing."
-    )
+    market_rent_gap = estimated_rent - saved_rent if estimated_rent and saved_rent and comps else None
+    if market_rent_gap is None:
+        under_rented_score = "DATA_UNAVAILABLE"
+    else:
+        under_rented_score = "HIGH" if market_rent_gap >= 300 else "MEDIUM" if market_rent_gap >= 125 else "LOW"
+    if estimated_rent and comps:
+        summary = (
+            f"Realtime rent analysis found ${estimated_rent:,.0f}/mo from {len(comps)} saved provider/database comp signal(s). "
+            f"HUD FMR is {('$' + format(section8_rent, ',.0f')) if section8_rent else 'unavailable'}. "
+            f"Projected monthly cash flow is ${metrics['monthly_cash_flow']:,.0f} before financing."
+        )
+    elif estimated_rent:
+        summary = (
+            f"Saved provider rent is ${estimated_rent:,.0f}/mo, but realtime rental comps were not available. "
+            "Confidence is low until live rental comp data is connected."
+        )
+    else:
+        summary = (
+            "Realtime rent data unavailable. Connect a live rent provider, import rental comps, or save provider-backed rent data "
+            "before relying on cash-flow analysis."
+        )
 
     analysis_values = {
         "property_id": property_id,
-        "estimated_rent": round(estimated_rent),
-        "rent_low": round(rent_low),
-        "rent_high": round(rent_high),
-        "section8_rent": round(section8_rent),
+        "estimated_rent": round(estimated_rent) if estimated_rent is not None else None,
+        "rent_low": round(rent_low) if rent_low is not None else None,
+        "rent_high": round(rent_high) if rent_high is not None else None,
+        "section8_rent": round(section8_rent) if section8_rent is not None else None,
         "confidence_score": confidence_score,
         "gross_yield": metrics["gross_yield"],
         "cap_rate": metrics["cap_rate"],
@@ -337,7 +316,7 @@ def generate_rent_analysis(property_id: int) -> dict[str, Any]:
         "cash_on_cash_return": metrics["cash_on_cash_return"],
         "expense_ratio": metrics["expense_ratio"],
         "under_rented_score": under_rented_score,
-        "market_rent_gap": round(market_rent_gap),
+        "market_rent_gap": round(market_rent_gap) if market_rent_gap is not None else None,
         "section8_spread": metrics["section8_spread"],
         "comp_count": len(comps),
         "summary": summary,
@@ -351,11 +330,12 @@ def generate_rent_analysis(property_id: int) -> dict[str, Any]:
         conn.execute(delete(deal_analysis).where(deal_analysis.c.property_id == property_id))
         result = conn.execute(insert(deal_analysis).values(**analysis_values))
         analysis_id = result.inserted_primary_key[0]
-        conn.execute(
-            properties.update()
-            .where(properties.c.id == property_id)
-            .values(estimated_rent=round(estimated_rent), updated_at=datetime.utcnow())
-        )
+        if estimated_rent is not None:
+            conn.execute(
+                properties.update()
+                .where(properties.c.id == property_id)
+                .values(estimated_rent=round(estimated_rent), updated_at=datetime.utcnow())
+            )
         analysis_row = conn.execute(select(deal_analysis).where(deal_analysis.c.id == analysis_id)).mappings().first()
 
     return {

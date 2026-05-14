@@ -47,7 +47,6 @@ from server.scrapers.rentcast import (
     is_rentcast_enabled,
 )
 from server.location_normalizer import normalize_location
-from server.low_cost_data_engine import estimate_rent, estimate_section8_rent
 
 logger = logging.getLogger(__name__)
 
@@ -158,24 +157,22 @@ def ai_estimate_photo_age_and_distress(photos: List[str], description: str) -> P
             category="unknown",
             value_score=0.5,
             distress_evidence=False,
-            notes="No photos available; default medium uncertainty."
+            notes="No scraped photos available."
         )
 
-    estimated_age_months = 18.0
-    category, value_score = bucket_photo_age(estimated_age_months)
     return PhotoAnalysis(
-        estimated_age_months=estimated_age_months,
-        category=category,
-        value_score=value_score,
+        estimated_age_months=None,
+        category="unverified",
+        value_score=0.55,
         distress_evidence=False,
-        notes="Placeholder AI estimate; integrate real vision model."
+        notes="Photos were scraped, but no live vision analyzer is configured for automatic photo-age or distress detection."
     )
 
 
 def ai_rate_systems(photos: List[str], description: str) -> SystemRatings:
-    kitchen_score = 1.0
-    furnace_score = 0.8
-    water_heater_score = 0.8
+    kitchen_score = 0.5
+    furnace_score = 0.5
+    water_heater_score = 0.5
 
     system_condition_score = (kitchen_score + furnace_score + water_heater_score) / 3.0
     return SystemRatings(
@@ -183,7 +180,7 @@ def ai_rate_systems(photos: List[str], description: str) -> SystemRatings:
         furnace_score=furnace_score,
         water_heater_score=water_heater_score,
         system_condition_score=system_condition_score,
-        notes="Placeholder system ratings; integrate real AI analysis."
+        notes="System condition is unknown until photos are analyzed by the AI Property Condition Analyzer."
     )
 
 
@@ -207,8 +204,6 @@ def _estimate_rent(listing: Listing) -> Optional[float]:
         or rent_estimate.get("price")
         or rent_estimate.get("estimatedRent")
         or rent_estimate.get("median")
-        or listing.raw_data.get("low_cost_rent_estimate")
-        or listing.raw_data.get("section8_estimate")
         or listing.raw_data.get("estimatedRent")
         or listing.raw_data.get("estimated_rent")
         or listing.raw_data.get("rentEstimate")
@@ -637,13 +632,6 @@ def extract_rentcast_comps(value_estimate: Dict[str, Any]) -> List[Dict[str, Any
 
 def enrich_listing(listing: Listing) -> Listing:
     merged_raw = dict(listing.raw_data)
-    merged_raw["low_cost_rent_estimate"] = estimate_rent({
-        "bedrooms": listing.beds,
-        "sqft": listing.sqft,
-        "city": listing.city,
-        "state": listing.state,
-    })
-    merged_raw["section8_estimate"] = estimate_section8_rent(listing.beds, listing.city, listing.state)
     listing.raw_data = merged_raw
 
     if not is_rentcast_enabled():

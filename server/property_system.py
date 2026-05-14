@@ -545,7 +545,7 @@ def ingest_property_from_analysis(analysis: Any, source_listing_id: Optional[int
         "lotSize": _first(property_record, "lotSize", "lot_size"),
         "yearBuilt": listing.year_built or _first(property_record, "yearBuilt", "year_built"),
         "estimatedValue": _estimate_from(raw, "value_estimate") or listing.price,
-        "estimatedRent": _estimate_from(raw, "rent_estimate") or _num(_first(raw, "low_cost_rent_estimate", "section8_estimate")),
+        "estimatedRent": _estimate_from(raw, "rent_estimate") or _num(_first(raw, "estimatedRent", "estimated_rent", "rentEstimate")),
         "taxAmountDue": _first(property_record, "taxAmountDue", "tax_amount_due"),
         "ownerName": _first(property_record, "ownerName", "owner_name"),
         "sourceUrl": _first(raw, "source_url", "url", "listingUrl"),

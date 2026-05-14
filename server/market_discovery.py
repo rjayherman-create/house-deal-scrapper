@@ -13,7 +13,6 @@ from typing import Any, Mapping, Optional
 
 from sqlalchemy import Boolean, Column, DateTime, Integer, JSON, Numeric, String, Table, Text, delete, desc, insert, select
 
-from server.low_cost_data_engine import estimate_section8_rent
 from server.property_system import _jsonable, _row_to_dict, get_property_engine, metadata, properties
 from server.rent_analyzer import deal_analysis
 
@@ -126,21 +125,31 @@ def _median(values: list[float]) -> float:
     return (ordered[mid - 1] + ordered[mid]) / 2
 
 
-def _score_market(rows: list[Mapping[str, Any]], city: str, state: str, zip_code: str) -> dict[str, Any]:
+def _score_market(
+    rows: list[Mapping[str, Any]],
+    city: str,
+    state: str,
+    zip_code: str,
+    rent_by_property: Mapping[int, Mapping[str, Any]],
+) -> dict[str, Any]:
     prices = [_num(row.get("estimated_value")) for row in rows]
     prices = [value for value in prices if value]
     rents = [_num(row.get("estimated_rent")) for row in rows]
     rents = [value for value in rents if value]
-    bedrooms = [_num(row.get("bedrooms")) or 2 for row in rows]
     avg_price = sum(prices) / len(prices) if prices else 0
     avg_rent = sum(rents) / len(rents) if rents else 0
-    avg_section8 = sum(estimate_section8_rent(bed, city, state) for bed in bedrooms) / len(bedrooms) if bedrooms else estimate_section8_rent(2, city, state)
+    section8_values = [
+        _num(rent_by_property.get(int(row.get("id") or 0), {}).get("section8_rent"))
+        for row in rows
+    ]
+    section8_values = [value for value in section8_values if value]
+    avg_section8 = sum(section8_values) / len(section8_values) if section8_values else None
     foreclosure_rate = 100 * sum(1 for row in rows if row.get("foreclosure")) / len(rows) if rows else 0
     vacancy_rate = 100 * sum(1 for row in rows if row.get("vacant")) / len(rows) if rows else 0
     investor_activity = min(10, len(rows) / 8)
     rent_to_price = (avg_rent * 12 / avg_price) if avg_price else 0
     cashflow_score = min(100, rent_to_price * 520)
-    section8_bonus = max(0, (avg_section8 - avg_rent) / avg_rent * 100) if avg_rent else 0
+    section8_bonus = max(0, (avg_section8 - avg_rent) / avg_rent * 100) if avg_rent and avg_section8 else 0
     opportunity_score = min(100, cashflow_score + section8_bonus + max(0, 10 - investor_activity) * 2 + min(15, foreclosure_rate))
     return {
         "city": city,
@@ -150,7 +159,7 @@ def _score_market(rows: list[Mapping[str, Any]], city: str, state: str, zip_code
         "median_price": round(_median(prices)),
         "avg_rent": round(avg_rent),
         "median_rent": round(_median(rents)),
-        "avg_section8_rent": round(avg_section8),
+        "avg_section8_rent": round(avg_section8) if avg_section8 is not None else None,
         "vacancy_rate": round(vacancy_rate, 1),
         "foreclosure_rate": round(foreclosure_rate, 1),
         "crime_score": 5,
@@ -168,6 +177,11 @@ def _score_market(rows: list[Mapping[str, Any]], city: str, state: str, zip_code
 def update_market_stats() -> list[dict[str, Any]]:
     with get_property_engine().begin() as conn:
         rows = conn.execute(select(properties)).mappings().all()
+        rent_rows = conn.execute(select(deal_analysis).order_by(desc(deal_analysis.c.updated_at))).mappings().all()
+    rent_by_property: dict[int, dict[str, Any]] = {}
+    for row in rent_rows:
+        item = _row_to_dict(row)
+        rent_by_property.setdefault(int(item["property_id"]), item)
     groups: dict[tuple[str, str, str], list[dict[str, Any]]] = {}
     for row in rows:
         item = _row_to_dict(row)
@@ -178,7 +192,7 @@ def update_market_stats() -> list[dict[str, Any]]:
         )
         groups.setdefault(key, []).append(item)
 
-    stats = [_score_market(group_rows, *key) for key, group_rows in groups.items() if key[1]]
+    stats = [_score_market(group_rows, *key, rent_by_property) for key, group_rows in groups.items() if key[1]]
     with get_property_engine().begin() as conn:
         conn.execute(delete(market_stats))
         for stat in stats:

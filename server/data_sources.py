@@ -26,6 +26,7 @@ def _rentcast_enabled() -> bool:
 
 def get_data_sources() -> List[DataSourceStatus]:
     realty_mole_enabled = _enabled("REALTY_MOLE_API_KEY") or _enabled("RAPIDAPI_KEY")
+    hud_enabled = _enabled("HUD_USER_TOKEN") or _enabled("HUD_API_TOKEN")
     return [
         DataSourceStatus(
             name="Realty Mole",
@@ -48,14 +49,24 @@ def get_data_sources() -> List[DataSourceStatus]:
             setup_note="Disabled by default to control costs. Set RENTCAST_ENABLED=true only when premium enrichment is intentionally enabled.",
         ),
         DataSourceStatus(
-            name="Low-Cost Data Engine",
-            category="primary_engine",
+            name="HUD USER FMR API",
+            category="official_rent_api",
+            required_for_analysis=False,
+            enabled=hud_enabled,
+            env_var="HUD_USER_TOKEN",
+            status="ready" if hud_enabled else "missing_api_key",
+            purpose="Official Fair Market Rent source for Section 8/FMR rent values.",
+            setup_note="Set HUD_USER_TOKEN or HUD_API_TOKEN in Railway. Without it, Section 8/FMR values show as unavailable.",
+        ),
+        DataSourceStatus(
+            name="Realtime Data Guardrails",
+            category="analysis_engine",
             required_for_analysis=True,
             enabled=True,
             env_var=None,
             status="ready",
-            purpose="Primary default strategy using cached intelligence, public scrape data, internal rent estimates, and Section 8 estimates.",
-            setup_note="No paid API key required.",
+            purpose="Prevents synthetic comps, fake photos, and fabricated rent/Section 8 values from being displayed as live data.",
+            setup_note="When providers are not connected, cards show data unavailable instead of generated filler data.",
         ),
         DataSourceStatus(
             name="Redfin CSV",
