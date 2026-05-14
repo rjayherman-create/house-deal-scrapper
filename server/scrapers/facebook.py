@@ -1,25 +1,34 @@
+import logging
+import re
+
 import requests
 from bs4 import BeautifulSoup
-import re
+
+logger = logging.getLogger(__name__)
+
 
 def fetch_facebook(city, state, limit):
     """
     Facebook Marketplace scraper.
     Works only when FB does not challenge with login.
     """
-    try:
-        headers = {
-            "User-Agent": "Mozilla/5.0",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-        search = f"{city} {state}".strip().replace(" ", "%20")
-        city_slug = city.strip().lower().replace(" ", "-")
-        candidate_urls = [
-            f"https://www.facebook.com/marketplace/search/?query={search}",
-            f"https://www.facebook.com/marketplace/{city_slug}/search/?query={search}",
-        ]
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0 Safari/537.36"
+        ),
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    search = f"{city} {state}".strip().replace(" ", "%20")
+    city_slug = city.strip().lower().replace(" ", "-")
+    candidate_urls = [
+        f"https://www.facebook.com/marketplace/search/?query={search}",
+        f"https://www.facebook.com/marketplace/{city_slug}/search/?query={search}",
+    ]
 
-        for url in candidate_urls:
+    for url in candidate_urls:
+        try:
             resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code != 200:
                 continue
@@ -40,13 +49,17 @@ def fetch_facebook(city, state, limit):
                     "city": city,
                     "state": state,
                     "zip_code": "",
-                    "asking_price": price_val
+                    "asking_price": price_val,
                 })
 
             if results:
+                logger.info(
+                    "Facebook: fetched %d listings for %s, %s", len(results), city, state
+                )
                 return results
 
-        return []
+        except Exception as exc:
+            logger.warning("Facebook fetch failed for %s (%s, %s): %s", url, city, state, exc)
 
-    except Exception:
-        return []
+    logger.warning("Facebook: no listings found for %s, %s (login likely required)", city, state)
+    return []
