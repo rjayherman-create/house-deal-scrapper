@@ -30,6 +30,7 @@ from sqlalchemy import (
     desc,
     select,
     text as sql_text,
+    update,
 )
 from sqlalchemy.engine import Engine, RowMapping
 
@@ -491,6 +492,21 @@ def add_property_note(property_id: int, user_id: Optional[str], note: str) -> No
                 note=note,
             )
         )
+
+
+def update_property_status(property_id: int, status: str) -> Optional[dict[str, Any]]:
+    with get_property_engine().begin() as conn:
+        conn.execute(
+            update(properties)
+            .where(properties.c.id == property_id)
+            .values(status=status, updated_at=datetime.utcnow())
+        )
+        row = (
+            conn.execute(select(properties).where(properties.c.id == property_id))
+            .mappings()
+            .first()
+        )
+    return _row_to_dict(row) if row else None
 
 
 def get_deal_alerts(min_score: int = 70) -> list[dict[str, Any]]:

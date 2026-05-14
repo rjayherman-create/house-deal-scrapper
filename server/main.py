@@ -24,6 +24,7 @@ from server.property_system import (
     ingest_property,
     ingest_property_from_analysis,
     init_property_system_db,
+    update_property_status,
 )
 from server.scrapers.craigslist import fetch_craigslist
 from server.scrapers.facebook import fetch_facebook
@@ -237,6 +238,26 @@ async def api_add_property_note(data: dict):
         }
     except Exception as exc:
         logger.exception("property note add failed: %s", exc)
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@app.post("/api/properties/{property_id}/status")
+async def api_update_property_status(property_id: int, data: dict):
+    try:
+        status_value = str(data.get("status") or "").strip().upper()
+        if not status_value:
+            raise ValueError("status is required")
+        property_record = await run_in_threadpool(update_property_status, property_id, status_value)
+        if not property_record:
+            raise HTTPException(status_code=404, detail="Property not found")
+        return {
+            "success": True,
+            "property": property_record,
+        }
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("property status update failed: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 

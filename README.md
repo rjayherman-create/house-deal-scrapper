@@ -22,3 +22,4 @@ Useful production diagnostics:
 - `/analyze?city=Detroit&state=MI` runs the full analysis pipeline.
 - `/api/properties/high-deals` returns saved properties ordered by deal score.
 - `/api/deals/alerts` returns saved properties with deal scores at or above 70.
+- `/api/properties/{property_id}/status` updates a saved property's pipeline status.
