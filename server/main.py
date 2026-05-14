@@ -103,6 +103,29 @@ def persist_analysis(analysis: ListingAnalysis) -> dict:
     return serialized
 
 
+def research_item_score(item: dict) -> int:
+    listing = item.get("listing") if isinstance(item, dict) else {}
+    listing = listing if isinstance(listing, dict) else {}
+    raw_score = (
+        listing.get("property_deal_score")
+        or listing.get("deal_score")
+        or item.get("deal_score")
+        or item.get("dealScore")
+    )
+    if raw_score is None:
+        final_score = item.get("deal_scores", {}).get("final_score") if isinstance(item, dict) else None
+        if final_score is not None:
+            try:
+                final_score_number = float(final_score)
+                raw_score = final_score_number * 100 if final_score_number <= 1 else final_score_number
+            except (TypeError, ValueError):
+                raw_score = 0
+    try:
+        return int(round(float(raw_score or 0)))
+    except (TypeError, ValueError):
+        return 0
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok", "message": "Backend running"}
@@ -159,6 +182,113 @@ async def analyze(
     except Exception as exc:
         logger.exception("analyze(%s, %s) failed: %s", normalized_city, normalized_state, exc)
         raise HTTPException(status_code=500, detail="Analysis failed while fetching listings.") from exc
+
+
+@app.get("/api/research")
+async def api_research(
+    city: Optional[str] = Query(None),
+    state: Optional[str] = Query(None),
+    q: Optional[str] = Query(None, description="Address, county, zip, or parcel search"),
+    include_photos: bool = Query(True),
+    max_price: Optional[float] = Query(None, ge=0),
+    min_score: Optional[int] = Query(None, ge=0, le=100),
+    mode: str = Query("both", pattern="^(database|live|both)$"),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Unified research route used by the Research screen.
+
+    It searches saved property intelligence and/or live sources, then returns a
+    combined payload so the UI can still show research data when public live
+    scrapers return zero or are blocked.
+    """
+
+    database_rows = []
+    live_rows = []
+    errors = []
+    normalized_city = city
+    normalized_state = state
+    corrected = False
+    live_skipped = False
+
+    if mode in {"database", "both"}:
+        try:
+            database_rows = await run_in_threadpool(
+                search_properties,
+                city,
+                state,
+                q,
+                max_price,
+                min_score,
+                limit,
+            )
+        except Exception as exc:
+            logger.exception("research database search failed: %s", exc)
+            errors.append({"source": "database", "message": str(exc)})
+
+    if mode in {"live", "both"}:
+        if not city or not state:
+            live_skipped = True
+            errors.append({"source": "live", "message": "City and state are required for live research."})
+        else:
+            normalized_city, normalized_state, corrected = normalize_location(city, state)
+            try:
+                results = await run_in_threadpool(search_listings, normalized_city, normalized_state, include_photos, max_price)
+                live_rows = [persist_analysis(result) for result in results]
+                if min_score is not None:
+                    live_rows = [item for item in live_rows if research_item_score(item) >= min_score]
+                if corrected:
+                    for item in live_rows:
+                        item.setdefault("search", {})
+                        item["search"].update(
+                            {
+                                "requested_city": city,
+                                "requested_state": state,
+                                "city": normalized_city,
+                                "state": normalized_state,
+                                "corrected": True,
+                            }
+                        )
+            except (RentCastAuthenticationError, RealtyMoleAuthenticationError) as exc:
+                logger.exception("research live source authentication failed: %s", exc)
+                errors.append({"source": "live", "message": str(exc)})
+            except Exception as exc:
+                logger.exception("research live analysis failed: %s", exc)
+                errors.append({"source": "live", "message": "Live research failed while fetching listings."})
+
+    combined = []
+    seen = set()
+    for item in [*database_rows, *live_rows]:
+        listing = item.get("listing") if isinstance(item, dict) else None
+        row = listing if isinstance(listing, dict) else item
+        key = (
+            str(row.get("address") or "").lower(),
+            str(row.get("city") or "").lower(),
+            str(row.get("state") or "").lower(),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        combined.append(item)
+
+    return {
+        "success": True,
+        "mode": mode,
+        "city": normalized_city,
+        "state": normalized_state,
+        "corrected": corrected,
+        "database": {
+            "count": len(database_rows),
+            "data": database_rows,
+        },
+        "live": {
+            "count": len(live_rows),
+            "data": live_rows,
+            "skipped": live_skipped,
+        },
+        "combined_count": len(combined),
+        "data": combined,
+        "errors": errors,
+    }
 
 
 @app.get("/")

@@ -1527,82 +1527,71 @@
       $("analyzeStatus").textContent = "Search saved.";
     }
 
-    async function runAnalyze() {
-      const city = $("city").value.trim();
-      const stateCode = $("state").value.trim();
-      if (!city || !stateCode) {
-        $("analyzeStatus").textContent = "City and state are required.";
-        return;
-      }
-      $("analyzeStatus").textContent = "Running live analysis...";
-      $("analyzeResults").className = "empty-state";
-      $("analyzeResults").textContent = "Scraping and analyzing listings...";
-      try {
-        const params = new URLSearchParams({
-          city,
-          state: stateCode,
-          include_photos: $("photos").value,
-        });
-        const maxPrice = $("maxPrice").value.trim();
-        if (maxPrice) params.set("max_price", maxPrice);
-        const response = await fetch(`/analyze?${params.toString()}`);
-        if (!response.ok) {
-          const error = await response.json().catch(() => null);
-          throw new Error(error?.detail || `Request failed with ${response.status}`);
-        }
-        const rows = await response.json();
-        state.dashboardItems = Array.isArray(rows) ? rows : [];
-        state.expanded = {};
-        updateStats(state.dashboardItems);
-        $("analyzeStatus").textContent = `Found ${state.dashboardItems.length} analyzed listing${state.dashboardItems.length === 1 ? "" : "s"}.`;
-        renderPropertyList($("analyzeResults"), state.dashboardItems, "No live listings were returned for this search.");
-      } catch (err) {
-        $("analyzeStatus").textContent = "";
-        showError($("analyzeResults"), `Analyze failed: ${err.message}`);
-      }
-    }
-
-    async function searchResearchDatabase({ append = false } = {}) {
+    function researchParams(mode) {
       const city = $("city").value.trim();
       const stateCode = $("state").value.trim();
       const query = $("researchQuery").value.trim();
       const maxPrice = $("maxPrice").value.trim();
       const minScore = $("researchMinScore").value;
-      if (!city && !stateCode && !query && !maxPrice && !minScore) {
-        $("analyzeStatus").textContent = "Enter a city, state, address, county, zip, parcel, price, or score to search the database.";
-        return [];
-      }
-      $("analyzeStatus").textContent = "Searching saved property database...";
-      $("analyzeResults").className = "empty-state";
-      $("analyzeResults").textContent = "Searching database records...";
-      const params = new URLSearchParams();
+      const params = new URLSearchParams({ mode });
       if (city) params.set("city", city);
       if (stateCode) params.set("state", stateCode);
       if (query) params.set("q", query);
       if (maxPrice) params.set("max_price", maxPrice);
       if (minScore) params.set("min_score", minScore);
-      const response = await fetch(`/api/properties/search?${params.toString()}`);
-      if (!response.ok) {
-        const error = await response.json().catch(() => null);
-        throw new Error(error?.detail || `Database search failed with ${response.status}`);
+      params.set("include_photos", $("photos").value);
+      return params;
+    }
+
+    async function runResearch(mode) {
+      const params = researchParams(mode);
+      const hasCity = params.has("city");
+      const hasState = params.has("state");
+      const hasDatabaseInput = params.has("q") || params.has("max_price") || params.has("min_score") || hasCity || hasState;
+      if (mode !== "database" && (!hasCity || !hasState)) {
+        $("analyzeStatus").textContent = "City and state are required for live research.";
+        return [];
       }
-      const data = await response.json();
-      const rows = data.data || [];
-      state.dashboardItems = append ? [...rows, ...state.dashboardItems] : rows;
-      state.expanded = {};
-      updateStats(state.dashboardItems);
-      $("analyzeStatus").textContent = `Found ${rows.length} saved database propert${rows.length === 1 ? "y" : "ies"}.`;
-      renderPropertyList($("analyzeResults"), state.dashboardItems, "No saved database properties matched this search.");
-      return rows;
+      if (mode === "database" && !hasDatabaseInput) {
+        $("analyzeStatus").textContent = "Enter a city, state, address, county, zip, parcel, price, or score to search the database.";
+        return [];
+      }
+      const label = mode === "database" ? "Searching saved property database..." : mode === "live" ? "Running live research..." : "Searching database and live sources...";
+      $("analyzeStatus").textContent = label;
+      $("analyzeResults").className = "empty-state";
+      $("analyzeResults").textContent = label;
+      try {
+        const response = await fetch(`/api/research?${params.toString()}`);
+        if (!response.ok) {
+          const error = await response.json().catch(() => null);
+          throw new Error(error?.detail || `Research failed with ${response.status}`);
+        }
+        const data = await response.json();
+        const rows = data.data || [];
+        state.dashboardItems = rows;
+        state.expanded = {};
+        updateStats(state.dashboardItems);
+        const errorText = data.errors?.length ? ` ${data.errors.map((item) => `${item.source}: ${item.message}`).join(" ")}` : "";
+        $("analyzeStatus").textContent = `Research found ${data.combined_count || rows.length} total: ${data.database?.count || 0} database, ${data.live?.count || 0} live.${errorText}`;
+        renderPropertyList($("analyzeResults"), state.dashboardItems, "No research records matched. Try a broader city/state search or check Data Source Health.");
+        return rows;
+      } catch (err) {
+        $("analyzeStatus").textContent = "";
+        showError($("analyzeResults"), `Research failed: ${err.message}`);
+        return [];
+      }
+    }
+
+    async function runAnalyze() {
+      return runResearch("live");
+    }
+
+    async function searchResearchDatabase() {
+      return runResearch("database");
     }
 
     async function searchDatabaseAndLive() {
-      try {
-        await searchResearchDatabase();
-      } catch (err) {
-        $("analyzeStatus").textContent = `Database search failed: ${err.message}. Running live analysis next...`;
-      }
-      await runAnalyze();
+      return runResearch("both");
     }
 
     async function loadListings() {
