@@ -31,6 +31,7 @@ import re
 from server.scrapers.redfin import fetch_redfin
 from server.scrapers.zillow import fetch_zillow
 from server.scrapers.realtor import fetch_realtor
+from server.scrapers.realty_mole import RealtyMoleAuthenticationError, fetch_realty_mole, is_realty_mole_enabled
 from server.scrapers.craigslist import fetch_craigslist
 from server.scrapers.facebook import fetch_facebook
 from server.scrapers.rentcast import (
@@ -610,13 +611,16 @@ def search_listings(
             return None
 
     # Pull from all scrapers
-    scrapers = [
+    scrapers = []
+    if is_realty_mole_enabled():
+        scrapers.append(("Realty Mole", fetch_realty_mole))
+    scrapers.extend([
         ("Redfin", fetch_redfin),
         ("Zillow", fetch_zillow),
         ("Realtor", fetch_realtor),
         ("Craigslist", fetch_craigslist),
         ("Facebook", fetch_facebook),
-    ]
+    ])
     if is_rentcast_enabled():
         scrapers.append(("RentCast", fetch_rentcast))
 
@@ -653,7 +657,7 @@ def search_listings(
                 normalized["address"] = address
                 normalized["asking_price"] = price
                 listings_raw.append((source_name, normalized))
-        except RentCastAuthenticationError:
+        except (RentCastAuthenticationError, RealtyMoleAuthenticationError):
             raise
         except Exception as exc:
             logger.warning(

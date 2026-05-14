@@ -37,6 +37,7 @@ from server.scrapers.facebook import fetch_facebook
 from server.scrapers.realtor import fetch_realtor
 from server.scrapers.redfin import fetch_redfin
 from server.scrapers.rentcast import RentCastAuthenticationError, check_rentcast, fetch_rentcast
+from server.scrapers.realty_mole import RealtyMoleAuthenticationError, check_realty_mole, fetch_realty_mole, is_realty_mole_enabled
 from server.scrapers.zillow import fetch_zillow
 
 logging.basicConfig(
@@ -145,6 +146,9 @@ async def analyze(
     except RentCastAuthenticationError as exc:
         logger.exception("RentCast authentication failed during analyze(%s, %s): %s", normalized_city, normalized_state, exc)
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except RealtyMoleAuthenticationError as exc:
+        logger.exception("Realty Mole authentication failed during analyze(%s, %s): %s", normalized_city, normalized_state, exc)
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("analyze(%s, %s) failed: %s", normalized_city, normalized_state, exc)
         raise HTTPException(status_code=500, detail="Analysis failed while fetching listings.") from exc
@@ -176,11 +180,13 @@ async def status():
 async def data_sources():
     sources = serialize_data_sources()
     rentcast_status = check_rentcast()
+    realty_mole_status = check_realty_mole()
     return {
         "primary_ready": has_primary_listing_source(),
         "ai_analyzer_ready": is_openai_configured(),
         "live_check": {
             "rentcast": rentcast_status,
+            "realty_mole": realty_mole_status,
         },
         "sources": sources,
         "required_setup": [
@@ -231,6 +237,7 @@ async def debug_live_data(
 ):
     normalized_city, normalized_state, corrected = normalize_location(city, state)
     rentcast_status = check_rentcast(normalized_city, normalized_state)
+    realty_mole_status = check_realty_mole(normalized_city, normalized_state)
     return {
         "city": normalized_city,
         "state": normalized_state,
@@ -239,6 +246,7 @@ async def debug_live_data(
         "requested_state": state,
         "primary_ready": has_primary_listing_source(),
         "rentcast": rentcast_status,
+        "realty_mole": realty_mole_status,
     }
 
 
@@ -378,14 +386,17 @@ async def debug_scrapers(
     state: str = Query("MI", description="State to test"),
 ):
     normalized_city, normalized_state, corrected = normalize_location(city, state)
-    scrapers = [
+    scrapers = []
+    if is_realty_mole_enabled():
+        scrapers.append(("Realty Mole", fetch_realty_mole))
+    scrapers.extend([
         ("RentCast", fetch_rentcast),
         ("Redfin", fetch_redfin),
         ("Zillow", fetch_zillow),
         ("Realtor", fetch_realtor),
         ("Craigslist", fetch_craigslist),
         ("Facebook", fetch_facebook),
-    ]
+    ])
     results = []
     for name, scraper in scrapers:
         try:

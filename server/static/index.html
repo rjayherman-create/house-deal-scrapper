@@ -1494,7 +1494,10 @@
       try {
         const data = await (await fetch("/data-sources")).json();
         const rentcast = data.live_check?.rentcast;
-        $("sourcesStatus").textContent = rentcast?.message || "Low-cost public-source data engine is active.";
+        const realtyMole = data.live_check?.realty_mole;
+        $("sourcesStatus").textContent = realtyMole?.ok
+          ? realtyMole.message
+          : rentcast?.message || realtyMole?.message || "Low-cost public-source data engine is active.";
         $("statApiMode").textContent = rentcast?.enabled ? "On" : "Off";
         const sourceCards = (data.sources || []).map((source) => `
           <div class="source-card">
