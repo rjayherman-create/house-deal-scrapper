@@ -22,9 +22,15 @@
       color: var(--text);
     }
     .container {
-      max-width: 1000px;
+      max-width: 1180px;
       margin: 0 auto;
       padding: 24px;
+    }
+    .sticky-panel {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.18);
     }
     .panel {
       background: var(--panel);
@@ -55,13 +61,19 @@
       gap: 8px;
       color: var(--text);
     }
-    input[type="text"], input[type="number"], input[type="file"] {
+    input[type="text"], input[type="number"], input[type="file"], select, textarea {
       background: #0e1426;
       border: 1px solid var(--border);
       color: var(--text);
       padding: 10px;
       border-radius: 8px;
       min-width: 160px;
+    }
+    textarea {
+      width: 100%;
+      min-height: 72px;
+      resize: vertical;
+      box-sizing: border-box;
     }
     button {
       background: var(--accent);
@@ -151,6 +163,46 @@
     .metric strong {
       font-size: 18px;
     }
+    .dashboard-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      margin-bottom: 10px;
+      background: #0d1429;
+      overflow: hidden;
+    }
+    .dashboard-header {
+      display: grid;
+      grid-template-columns: 34px 1fr auto;
+      gap: 12px;
+      align-items: center;
+      padding: 14px;
+      cursor: pointer;
+    }
+    .dashboard-header:hover {
+      background: #111b35;
+    }
+    .dashboard-chevron {
+      font-size: 20px;
+      color: #d8e4ff;
+      width: 24px;
+      text-align: center;
+    }
+    .dashboard-stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: flex-end;
+    }
+    .dashboard-body {
+      border-top: 1px solid var(--border);
+      padding: 14px;
+      background: #101933;
+    }
+    .print-report {
+      background: white;
+      color: #111;
+      padding: 24px;
+    }
   </style>
 </head>
 <body>
@@ -158,7 +210,7 @@
     <h1>House Deal Scraper</h1>
     <p class="muted">Backend + UI running on the same deployment.</p>
 
-    <div class="panel">
+    <div class="panel sticky-panel">
       <h2>Data Sources</h2>
       <p id="sourcesStatus" class="muted">Checking data sources...</p>
       <div id="sourcesResults"></div>
@@ -219,6 +271,27 @@
       <div class="row">
         <button id="loadListingsBtn" class="secondary">Load Listings</button>
         <button id="loadDealsBtn" class="secondary">Load High-Score Deals</button>
+        <label for="dashboardSearch">
+          Search
+          <input id="dashboardSearch" type="text" placeholder="Address or city" />
+        </label>
+        <label for="dashboardScore">
+          Min Score
+          <select id="dashboardScore">
+            <option value="0">All</option>
+            <option value="50">50+</option>
+            <option value="70">70+</option>
+            <option value="85">85+</option>
+          </select>
+        </label>
+        <label for="dashboardSort">
+          Sort
+          <select id="dashboardSort">
+            <option value="score">Deal score</option>
+            <option value="newest">Newest</option>
+            <option value="price">Price/value</option>
+          </select>
+        </label>
       </div>
       <p id="listingsStatus" class="muted"></p>
       <div id="listingsResults"></div>
@@ -238,6 +311,11 @@
     const listingsResults = document.getElementById("listingsResults");
     const sourcesStatus = document.getElementById("sourcesStatus");
     const sourcesResults = document.getElementById("sourcesResults");
+    const dashboardSearch = document.getElementById("dashboardSearch");
+    const dashboardScore = document.getElementById("dashboardScore");
+    const dashboardSort = document.getElementById("dashboardSort");
+    let dashboardItems = [];
+    let expandedProperties = {};
 
     function renderError(container, message) {
       container.textContent = "";
@@ -366,6 +444,219 @@
         fragment.appendChild(createListingCard(item));
       }
       container.appendChild(fragment);
+    }
+
+    function normalizeDashboardProperty(item) {
+      const p = item.listing || item.property || item;
+      return {
+        ...p,
+        dealScore: p.dealScore ?? p.deal_score ?? p.property_deal_score ?? 0,
+        estimatedRent: p.estimatedRent ?? p.estimated_rent ?? p.rentEstimate ?? p.section8Estimate ?? null,
+        estimatedValue: p.estimatedValue ?? p.estimated_value ?? p.price ?? p.asking_price ?? null,
+        taxAmountDue: p.taxAmountDue ?? p.tax_amount_due ?? null,
+        yearBuilt: p.yearBuilt ?? p.year_built ?? null,
+        sourceUrl: p.source_url ?? p.sourceUrl ?? p.links?.source ?? null,
+      };
+    }
+
+    function money(value) {
+      const number = Number(value || 0);
+      return number ? `$${number.toLocaleString()}` : "N/A";
+    }
+
+    function filteredDashboardItems() {
+      const term = dashboardSearch.value.trim().toLowerCase();
+      const minScore = Number(dashboardScore.value || 0);
+      let items = dashboardItems
+        .map(normalizeDashboardProperty)
+        .filter((p) => {
+          const haystack = [p.address, p.city, p.state, p.county].filter(Boolean).join(" ").toLowerCase();
+          return haystack.includes(term) && Number(p.dealScore || 0) >= minScore;
+        });
+      const sort = dashboardSort.value;
+      items.sort((a, b) => {
+        if (sort === "newest") return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+        if (sort === "price") return Number(a.estimatedValue || 0) - Number(b.estimatedValue || 0);
+        return Number(b.dealScore || 0) - Number(a.dealScore || 0);
+      });
+      return items;
+    }
+
+    function exportPropertyPDF(property) {
+      const p = normalizeDashboardProperty(property);
+      const report = window.open("", "_blank");
+      if (!report) return;
+      report.document.write(`
+        <html>
+          <head><title>Investor Report - ${p.address || "Property"}</title></head>
+          <body class="print-report">
+            <h1>Investor Property Report</h1>
+            <h2>${p.address || "Unknown address"}</h2>
+            <p>${[p.city, p.state, p.zip].filter(Boolean).join(", ")}</p>
+            <hr />
+            <h3>Investment Summary</h3>
+            <p><strong>Deal Score:</strong> ${p.dealScore || 0}/100</p>
+            <p><strong>Estimated Value:</strong> ${money(p.estimatedValue)}</p>
+            <p><strong>Estimated Rent:</strong> ${money(p.estimatedRent)}</p>
+            <p><strong>Tax Due:</strong> ${money(p.taxAmountDue)}</p>
+            <h3>Property Details</h3>
+            <p><strong>Bedrooms:</strong> ${p.bedrooms ?? "N/A"}</p>
+            <p><strong>Bathrooms:</strong> ${p.bathrooms ?? "N/A"}</p>
+            <p><strong>Sqft:</strong> ${p.sqft ?? "N/A"}</p>
+            <p><strong>Year Built:</strong> ${p.yearBuilt ?? "N/A"}</p>
+            <h3>Distress Flags</h3>
+            <p>Tax delinquent: ${p.tax_delinquent || p.taxDelinquent ? "YES" : "NO"}</p>
+            <p>Vacant: ${p.vacant ? "YES" : "NO"}</p>
+            <p>Foreclosure: ${p.foreclosure ? "YES" : "NO"}</p>
+            <p>Probate: ${p.probate ? "YES" : "NO"}</p>
+            <h3>Summary</h3>
+            <p>${p.ai_summary || "No summary saved."}</p>
+          </body>
+        </html>
+      `);
+      report.document.close();
+      report.focus();
+      report.print();
+    }
+
+    async function saveNote(propertyId, textarea) {
+      const note = textarea.value.trim();
+      if (!note || !propertyId) return;
+      const response = await fetch("/api/properties/note", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ propertyId, userId: "dashboard", note }),
+      });
+      if (!response.ok) throw new Error(`Request failed: ${response.status}`);
+      textarea.value = "";
+    }
+
+    function renderDashboard() {
+      const items = filteredDashboardItems();
+      listingsResults.textContent = "";
+      const fragment = document.createDocumentFragment();
+      for (const property of items) {
+        const isOpen = Boolean(expandedProperties[property.id]);
+        const card = document.createElement("div");
+        card.className = "dashboard-card";
+
+        const header = document.createElement("div");
+        header.className = "dashboard-header";
+        header.addEventListener("click", () => {
+          expandedProperties[property.id] = !expandedProperties[property.id];
+          renderDashboard();
+        });
+
+        const chev = document.createElement("div");
+        chev.className = "dashboard-chevron";
+        chev.textContent = isOpen ? "⌄" : "›";
+        header.appendChild(chev);
+
+        const title = document.createElement("div");
+        const strong = document.createElement("strong");
+        strong.textContent = property.address || "Unknown address";
+        const sub = document.createElement("div");
+        sub.className = "muted";
+        sub.textContent = [property.city, property.state, property.zip].filter(Boolean).join(", ");
+        title.appendChild(strong);
+        title.appendChild(sub);
+        header.appendChild(title);
+
+        const stats = document.createElement("div");
+        stats.className = "dashboard-stats";
+        for (const [label, value] of [["Score", property.dealScore || 0], ["Rent", money(property.estimatedRent)], ["Value", money(property.estimatedValue)]]) {
+          const stat = document.createElement("span");
+          stat.className = "badge";
+          stat.textContent = `${label}: ${value}`;
+          stats.appendChild(stat);
+        }
+        header.appendChild(stats);
+        card.appendChild(header);
+
+        if (isOpen) {
+          const body = document.createElement("div");
+          body.className = "dashboard-body";
+          const details = document.createElement("div");
+          details.className = "metric-grid";
+          const rows = [
+            ["Bedrooms", property.bedrooms ?? "N/A"],
+            ["Bathrooms", property.bathrooms ?? "N/A"],
+            ["Sqft", property.sqft ?? "N/A"],
+            ["Year Built", property.yearBuilt ?? "N/A"],
+            ["County", property.county ?? "N/A"],
+            ["Tax Due", money(property.taxAmountDue)],
+            ["Vacant", property.vacant ? "YES" : "NO"],
+            ["Foreclosure", property.foreclosure ? "YES" : "NO"],
+          ];
+          for (const [label, value] of rows) {
+            const box = document.createElement("div");
+            box.className = "metric";
+            const s = document.createElement("span");
+            s.textContent = label;
+            const v = document.createElement("strong");
+            v.textContent = String(value);
+            box.appendChild(s);
+            box.appendChild(v);
+            details.appendChild(box);
+          }
+          body.appendChild(details);
+
+          const summary = document.createElement("p");
+          summary.className = "muted";
+          summary.textContent = property.ai_summary || "No investor summary saved yet.";
+          body.appendChild(summary);
+
+          const actions = document.createElement("div");
+          actions.className = "listing-actions";
+          const links = property.links || {};
+          for (const [label, href] of Object.entries({
+            Source: property.sourceUrl || links.source,
+            Zillow: links.zillow,
+            Realtor: links.realtor,
+            Redfin: links.redfin,
+            Maps: links.googleMaps,
+          })) {
+            if (!href) continue;
+            const a = document.createElement("a");
+            a.href = href;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            a.textContent = label;
+            actions.appendChild(a);
+          }
+          const pdf = document.createElement("button");
+          pdf.className = "secondary";
+          pdf.textContent = "Export PDF Report";
+          pdf.addEventListener("click", (event) => {
+            event.stopPropagation();
+            exportPropertyPDF(property);
+          });
+          actions.appendChild(pdf);
+          body.appendChild(actions);
+
+          const note = document.createElement("textarea");
+          note.placeholder = "Add investor note...";
+          body.appendChild(note);
+          const save = document.createElement("button");
+          save.className = "secondary";
+          save.textContent = "Save Note";
+          save.addEventListener("click", async (event) => {
+            event.stopPropagation();
+            try {
+              await saveNote(property.id, note);
+              listingsStatus.textContent = "Note saved.";
+            } catch (err) {
+              listingsStatus.textContent = `Note failed: ${err.message}`;
+            }
+          });
+          body.appendChild(save);
+          card.appendChild(body);
+        }
+
+        fragment.appendChild(card);
+      }
+      listingsResults.appendChild(fragment);
+      listingsStatus.textContent = `Showing ${items.length} propert${items.length === 1 ? "y" : "ies"}.`;
     }
 
     function renderConditionResult(result) {
@@ -529,8 +820,8 @@
           renderMutedMessage(listingsResults, "No saved listings yet.");
           return;
         }
-        listingsStatus.textContent = `Loaded ${listings.length} saved listing(s).`;
-        renderListingCards(listingsResults, listings);
+        dashboardItems = listings;
+        renderDashboard();
       } catch (err) {
         listingsStatus.textContent = "";
         renderError(listingsResults, `Load failed: ${err.message}`);
@@ -552,13 +843,17 @@
           renderMutedMessage(listingsResults, "No property intelligence records yet. Run Analyze first.");
           return;
         }
-        listingsStatus.textContent = `Loaded ${listings.length} deal(s).`;
-        renderListingCards(listingsResults, listings);
+        dashboardItems = listings;
+        renderDashboard();
       } catch (err) {
         listingsStatus.textContent = "";
         renderError(listingsResults, `Dashboard failed: ${err.message}`);
       }
     });
+
+    dashboardSearch.addEventListener("input", renderDashboard);
+    dashboardScore.addEventListener("change", renderDashboard);
+    dashboardSort.addEventListener("change", renderDashboard);
 
     conditionBtn.addEventListener("click", async () => {
       conditionResults.textContent = "";
