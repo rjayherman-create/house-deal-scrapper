@@ -25,19 +25,8 @@ def _rentcast_enabled() -> bool:
 
 
 def get_data_sources() -> List[DataSourceStatus]:
-    realty_mole_enabled = _enabled("REALTY_MOLE_API_KEY") or _enabled("RAPIDAPI_KEY")
     hud_enabled = _enabled("HUD_USER_TOKEN") or _enabled("HUD_API_TOKEN")
     return [
-        DataSourceStatus(
-            name="Realty Mole",
-            category="live_listing_api",
-            required_for_analysis=False,
-            enabled=realty_mole_enabled,
-            env_var="REALTY_MOLE_API_KEY",
-            status="ready" if realty_mole_enabled else "missing_api_key",
-            purpose="Provider-backed live sale listing feed used before brittle website scraping.",
-            setup_note="Set REALTY_MOLE_API_KEY or RAPIDAPI_KEY in Railway to enable live sale listings, photos, and normalized property fields.",
-        ),
         DataSourceStatus(
             name="RentCast",
             category="premium_api",

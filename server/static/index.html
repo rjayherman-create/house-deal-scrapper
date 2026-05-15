@@ -1813,10 +1813,7 @@
       try {
         const data = await (await fetch("/data-sources")).json();
         const rentcast = data.live_check?.rentcast;
-        const realtyMole = data.live_check?.realty_mole;
-        $("sourcesStatus").textContent = realtyMole?.ok
-          ? realtyMole.message
-          : rentcast?.message || realtyMole?.message || "Realtime guardrails are active. Missing provider data is shown as unavailable.";
+        $("sourcesStatus").textContent = rentcast?.message || "Realtime guardrails are active. Missing provider data is shown as unavailable.";
         $("statApiMode").textContent = rentcast?.enabled ? "On" : "Off";
         const sourceCards = (data.sources || []).map((source) => `
           <div class="source-card">
